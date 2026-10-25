@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-probe_hysys_property_package.py — HYSYS V15 物性包 API 诊断探针
+probe_hysys_property_package.py — HYSYS V15 物性包 API 诊断探针（v2）
 ================================================================
 用途（仅诊断，不参与正式建模）：
-  1. 导出 FluidPackage / BasisManager / FluidPackages 的 COM 成员表（含 GET/PUT 权限）
-  2. 用临时 Case 测试几种 PropertyPackageName 设置顺序与内部名
-  3. 把完整报告写到 output/probe_hysys_property_package_report.txt
+  1. 导出 BasisManager / FluidPackages / FluidPackage 的 COM 成员表
+  2. 验证 FluidPackages.Add(name) / Add(name, Type) 的真实签名效果
+  3. 在**含至少一个组分**的临时 Case 中测试：
+       - 先加组分再设 PropertyPackageName
+       - 先设 PropertyPackageName 再加组分
+       - 多个 Peng-Robinson 内部名 / Add 的 Type 参数
+  4. 把完整报告写到 output/probe_hysys_property_package_report.txt
 
 运行（远程 HYSYS 工作站）：
     python tools/probe_hysys_property_package.py
@@ -13,7 +17,7 @@ probe_hysys_property_package.py — HYSYS V15 物性包 API 诊断探针
 安全设计：
   - 优先附着运行中的 HYSYS；若由本脚本启动，结束时 Quit
   - 每个测试用一个临时 Case，测试完立即 Close(False)，不保存
-  - 若 HYSYS 中已有重要未保存工作，建议先保存并关闭 HYSYS 再运行
+  - 若 HYSYS 中已有重要未保存工作，建议先保存
 """
 
 from __future__ import annotations
@@ -57,7 +61,7 @@ def com_detail(exc: BaseException) -> str:
 
 
 def dump_type_info(obj, label: str, filters: tuple[str, ...] | None = None) -> None:
-    """枚举 IDispatch 类型信息中的函数/属性；invkind 能区分 GET 与 PUT。"""
+    """枚举 IDispatch 类型信息；invkind 能区分 GET 与 PUT。"""
     report(f"\n--- [{label}] COM 类型信息 ---")
     try:
         type_info = obj._oleobj_.GetTypeInfo()
@@ -154,10 +158,65 @@ def end_basis(basis) -> bool:
         return False
 
 
+def add_fluid_package(basis, name: str, type_name: str | None = None):
+    """优先使用文档示例的 Add(name)；可选测试 Add(name, Type)。"""
+    if type_name is not None:
+        try:
+            fp = basis.FluidPackages.Add(name, type_name)
+            report(f"  FluidPackages.Add({name!r}, {type_name!r}) OK")
+            return fp
+        except Exception as exc:  # noqa: BLE001
+            report(
+                f"  FluidPackages.Add({name!r}, {type_name!r}) 失败："
+                f"{com_detail(exc)}；回退 Add(name)"
+            )
+    try:
+        fp = basis.FluidPackages.Add(name)
+        report(f"  FluidPackages.Add({name!r}) OK")
+        return fp
+    except Exception as exc:  # noqa: BLE001
+        report(f"  FluidPackages.Add({name!r}) 失败：{com_detail(exc)}；回退 Add()")
+        return basis.FluidPackages.Add()
+
+
+def add_component(fluid_pkg, component_id: str = "Methane") -> bool:
+    try:
+        component = fluid_pkg.Components.Add(component_id)
+        report(f"  Components.Add({component_id!r}) OK -> {component!r}")
+        component = None
+        return True
+    except Exception as exc:  # noqa: BLE001
+        report(f"  Components.Add({component_id!r}) 失败：{com_detail(exc)}")
+        return False
+
+
+def read_fluid_package(fluid_pkg, label: str = "FluidPackage") -> None:
+    safe_read(fluid_pkg, "Name", label)
+    safe_read(fluid_pkg, "PropertyPackageName", label)
+    try:
+        prop_pkg = fluid_pkg.PropertyPackage
+    except Exception as exc:  # noqa: BLE001
+        report(f"  {label}.PropertyPackage 读取失败：{com_detail(exc)}")
+    else:
+        report(f"  {label}.PropertyPackage = {prop_pkg!r}")
+        safe_read(prop_pkg, "Name", "PropertyPackage")
+        safe_read(prop_pkg, "TypeName", "PropertyPackage")
+        safe_read(prop_pkg, "VisibleTypeName", "PropertyPackage")
+
+    try:
+        count = int(fluid_pkg.Components.Count)
+        names = []
+        for index in range(count):
+            names.append(str(fluid_pkg.Components.Item(index).Name))
+        report(f"  {label}.Components = {names}")
+    except Exception as exc:  # noqa: BLE001
+        report(f"  {label}.Components 读取失败：{com_detail(exc)}")
+
+
 def introspect(app) -> None:
-    """在一个临时 Case 中导出 BasisManager / FluidPackages / FluidPackage 成员表。"""
+    """在一个临时 Case 中导出成员表，并测试 Add(name) + 组分 + End。"""
     report("\n" + "=" * 78)
-    report("第 1 部分：COM 成员表")
+    report("第 1 部分：COM 成员表 + Add(name)/组分/End 基础体验")
     report("=" * 78)
     case = None
     basis = None
@@ -165,16 +224,13 @@ def introspect(app) -> None:
     try:
         case = new_case(app, "introspect")
         basis = case.BasisManager
-        dump_type_info(basis, "BasisManager", filters=("prop", "pack", "basis", "fluid"))
-
-        try:
-            fluid_packages = basis.FluidPackages
-            dump_type_info(
-                fluid_packages, "FluidPackages collection",
-                filters=("add", "item", "count", "prop", "pack", "name"),
-            )
-        except Exception as exc:  # noqa: BLE001
-            report(f"  BasisManager.FluidPackages 读取失败：{com_detail(exc)}")
+        dump_type_info(
+            basis, "BasisManager", filters=("prop", "pack", "basis", "fluid")
+        )
+        dump_type_info(
+            basis.FluidPackages, "FluidPackages collection",
+            filters=("add", "item", "count", "prop", "pack", "name"),
+        )
 
         try:
             basis.StartBasisChange()
@@ -182,21 +238,18 @@ def introspect(app) -> None:
         except Exception as exc:  # noqa: BLE001
             report(f"  StartBasisChange 失败：{com_detail(exc)}")
 
-        fluid_pkg = basis.FluidPackages.Add()
-        report(f"  已创建临时 FluidPackage：{fluid_pkg!r}")
+        fluid_pkg = add_fluid_package(basis, "Probe_Introspect")
         dump_type_info(fluid_pkg, "FluidPackage", filters=None)
 
-        safe_read(fluid_pkg, "Name", "FluidPackage")
-        safe_read(fluid_pkg, "PropertyPackageName", "FluidPackage")
-        safe_read(fluid_pkg, "PropPackage", "FluidPackage")
-        try:
-            prop_pkg = fluid_pkg.PropPackage
-            safe_read(prop_pkg, "TypeName", "PropPackage")
-            dump_type_info(prop_pkg, "PropPackage", filters=None)
-        except Exception as exc:  # noqa: BLE001
-            report(f"  FluidPackage.PropPackage 读取失败：{com_detail(exc)}")
+        read_fluid_package(fluid_pkg, "FluidPackage")
+        add_component(fluid_pkg, "Methane")
+        read_fluid_package(fluid_pkg, "FluidPackage")
+
+        if started:
+            end_basis(basis)
+            started = False
     except Exception as exc:  # noqa: BLE001
-        report(f"  成员表探针异常：{com_detail(exc)}")
+        report(f"  成员表/基础体验异常：{com_detail(exc)}")
         report(traceback.format_exc())
     finally:
         if started and basis is not None:
@@ -205,119 +258,75 @@ def introspect(app) -> None:
         gc.collect()
 
 
-def run_variant(
+def run_component_test(
     app,
     tag: str,
     pp_name: str,
     *,
-    rename_before: bool = False,
-    rename_after_pp: bool = False,
-    set_after_end: bool = False,
-    solver_hold: bool = False,
+    order: str,
+    add_with_type: bool = False,
 ) -> None:
     """
-    测试一种设置顺序：
-      - 默认：Add -> 设 PP -> End
-      - rename_after_pp：Add -> 设 PP -> 改名 -> End（当前驱动的修复顺序）
-      - rename_before：Add -> 改名 -> 设 PP -> End（复现当前失败）
-      - set_after_end：Add -> End -> 新 Start -> 设 PP -> End
-      - solver_hold：在 StartBasisChange 之前 Solver.CanSolve=False
+    在含 Methane 的临时 Case 中测试：
+      order="comp_first"：Add(name) -> Components.Add -> PropertyPackageName -> End
+      order="pp_first"  ：Add(name) -> PropertyPackageName -> Components.Add -> End
+      add_with_type=True ：Add(name, pp_name) -> Components.Add -> End
     """
     report("\n" + "-" * 78)
     report(
-        f"测试 [{tag}] pp={pp_name!r}, rename_before={rename_before}, "
-        f"rename_after_pp={rename_after_pp}, set_after_end={set_after_end}, "
-        f"solver_hold={solver_hold}"
+        f"测试 [{tag}] pp={pp_name!r}, order={order}, "
+        f"add_with_type={add_with_type}"
     )
     case = None
     basis = None
     started = False
-    solver_was_held = False
     try:
         case = new_case(app, tag)
         basis = case.BasisManager
-
-        if solver_hold:
-            try:
-                old_can_solve = case.Solver.CanSolve
-                report(f"  Solver.CanSolve 初始 = {old_can_solve!r}")
-                case.Solver.CanSolve = False
-                solver_was_held = True
-                report("  Solver.CanSolve = False OK")
-            except Exception as exc:  # noqa: BLE001
-                report(f"  设置 Solver.CanSolve=False 失败：{com_detail(exc)}")
-
         try:
             basis.StartBasisChange()
             started = True
         except Exception as exc:  # noqa: BLE001
             report(f"  StartBasisChange 失败：{com_detail(exc)}")
 
-        fluid_pkg = basis.FluidPackages.Add()
-        report(f"  FluidPackages.Add OK: {fluid_pkg!r}")
-
-        def rename_fp(when: str) -> None:
-            try:
-                fluid_pkg.Name = f"Probe_{tag}"
-                report(f"  改名（{when}）OK")
-            except Exception as exc:  # noqa: BLE001
-                report(f"  改名（{when}）失败：{com_detail(exc)}")
+        fluid_pkg = add_fluid_package(
+            basis, f"Probe_{tag}", pp_name if add_with_type else None
+        )
 
         def set_property_package() -> bool:
-            ok = False
             try:
                 fluid_pkg.PropertyPackageName = pp_name
                 report(f"  PropertyPackageName = {pp_name!r} OK")
-                ok = True
+                return True
             except Exception as exc:  # noqa: BLE001
-                report(f"  PropertyPackageName = {pp_name!r} 失败：{com_detail(exc)}")
+                report(
+                    f"  PropertyPackageName = {pp_name!r} 失败："
+                    f"{com_detail(exc)}"
+                )
+                return False
+
+        if add_with_type:
+            # Add(name, Type) 理论上可能已设置 PP；先读一次
             safe_read(fluid_pkg, "PropertyPackageName", "FluidPackage")
-            return ok
-
-        if rename_before:
-            rename_fp("物性包设置之前")
-
-        if not set_after_end:
-            pp_ok = set_property_package()
-            if pp_ok and rename_after_pp:
-                rename_fp("物性包设置之后")
+            add_component(fluid_pkg)
+        elif order == "comp_first":
+            add_component(fluid_pkg)
+            set_property_package()
+        else:
+            set_property_package()
+            add_component(fluid_pkg)
 
         if started:
             end_basis(basis)
             started = False
 
-        if set_after_end:
-            try:
-                basis.StartBasisChange()
-                started = True
-            except Exception as exc:  # noqa: BLE001
-                report(f"  第二次 StartBasisChange 失败：{com_detail(exc)}")
-            set_property_package()
-            if started:
-                end_basis(basis)
-                started = False
-
-        safe_read(fluid_pkg, "PropertyPackageName", "FluidPackage")
-        try:
-            report(f"  PropPackage.TypeName = {fluid_pkg.PropPackage.TypeName!r}")
-        except Exception as exc:  # noqa: BLE001
-            report(f"  PropPackage.TypeName 读取失败：{com_detail(exc)}")
-        try:
-            report(f"  FluidPackage.Name = {fluid_pkg.Name!r}")
-        except Exception as exc:  # noqa: BLE001
-            report(f"  FluidPackage.Name 读取失败：{com_detail(exc)}")
+        read_fluid_package(fluid_pkg, "FluidPackage")
     except Exception as exc:  # noqa: BLE001
         report(f"  变体异常：{com_detail(exc)}")
         report(traceback.format_exc())
     finally:
         if started and basis is not None:
             end_basis(basis)
-        if solver_was_held and case is not None:
-            try:
-                case.Solver.CanSolve = True
-                report("  Solver.CanSolve = True 已恢复")
-            except Exception as exc:  # noqa: BLE001
-                report(f"  恢复 Solver.CanSolve=True 失败：{com_detail(exc)}")
         close_case(case)
         gc.collect()
 
@@ -364,17 +373,28 @@ def main() -> int:
             pass
 
         introspect(app)
-        run_variant(
-            app, "A_pp_then_rename", "PengRobinson", rename_after_pp=True
+
+        report("\n" + "=" * 78)
+        report("第 2 部分：带组分的设置顺序 / 内部名测试")
+        report("=" * 78)
+        run_component_test(app, "A_srk_comp_first", "SRK", order="comp_first")
+        run_component_test(app, "B_srk_pp_first", "SRK", order="pp_first")
+        run_component_test(
+            app, "C_pr_comp_first", "PengRobinson", order="comp_first"
         )
-        run_variant(app, "B_rename_before", "PengRobinson", rename_before=True)
-        run_variant(app, "C_after_end", "PengRobinson", set_after_end=True)
-        run_variant(app, "D_pr", "PR")
-        run_variant(app, "E_hysyspr", "HysysPR")
-        run_variant(app, "F_srk", "SRK")
-        run_variant(
-            app, "G_solver_hold", "PengRobinson",
-            rename_after_pp=True, solver_hold=True,
+        run_component_test(
+            app, "D_pr_pp_first", "PengRobinson", order="pp_first"
+        )
+        run_component_test(
+            app, "E_pr_dash_comp_first", "Peng-Robinson", order="comp_first"
+        )
+        run_component_test(
+            app, "F_pr_add_type", "PengRobinson",
+            order="comp_first", add_with_type=True,
+        )
+        run_component_test(
+            app, "G_srk_add_type", "SRK",
+            order="comp_first", add_with_type=True,
         )
     except Exception as exc:  # noqa: BLE001
         report(f"探针异常：{com_detail(exc)}")

@@ -209,8 +209,9 @@ HYSYSDriver（仅远程）
 | `Dispatch("HYSYS.Application")` / `GetActiveObject` | 启动 / 附着 HYSYS |
 | `SimulationCases.Add(name)`、`Case.Visible` | 新建并显示 Case |
 | `BasisManager.StartBasisChange()` / `EndBasisChange()` | Basis 修改通知（官方 Customization Guide 要求） |
-| `BasisManager.FluidPackages.Add()` | 新建流体包（**不带名称参数**） |
-| `FluidPackage.PropertyPackageName` | 物性包，内部名 `PengRobinson` |
+| `BasisManager.FluidPackages.Add(name, Type)` | 新建流体包；V15 类型库显示两个参数，`Add(name)` 有官方示例、`Type` 可选 |
+| `FluidPackage.PropertyPackageName` | 物性包名；V15 类型库确认 GET + PUT 都存在 |
+| `FluidPackage.PropertyPackage` | V15 实际返回物性包对象；`PropPackage` 在 V15 不存在 |
 | `FluidPackage.Components.Add("Methane")` | 添加标准组分 |
 | `Flowsheet.MaterialStreams.Add("FEED")` | 新建物流（VBA 公开示例） |
 | `Stream.Temperature/Pressure/MolarFlow.SetValue(value, unit)` / `.GetValue(unit)` | 带单位读写 |
@@ -407,6 +408,38 @@ python src\test_stage1.py --no-visible --log-level DEBUG
     `output/probe_hysys_property_package_report.txt`。
 
 修复顺序只是当前假设，需要远程复测确认；若仍失败，以探针输出为准修正。
+
+### 探针 v1 的补充发现（2026-10-26）
+
+远程 `ITypeInfo` 导出得到：
+
+```text
+FluidPackages.Add            FUNC  params=['name', 'Type']
+FluidPackage.PropertyPackageName  GET + PUT
+FluidPackage.PropertyPackage      GET
+FluidPackage.PropPackage          —— V15 不存在
+FluidPackage.name                 GET + PUT
+```
+
+关键实验：
+
+| 测试 | 结果 |
+|---|---|
+| `PropertyPackageName = "SRK"` | **成功**（说明属性可写） |
+| `PropertyPackageName = "PengRobinson"` / `"Peng-Robinson"` / `"PR"` / `"HysysPR"` | 均 `0x80070057 E_INVALIDARG` |
+| 所有测试的 `EndBasisChange` | `E_FAIL` |
+| `Solver.CanSolve = False` | `0x80070005 E_ACCESSDENIED` |
+
+结论与待办：
+
+1. 物性包属性确实可写，当前问题是 **Peng-Robinson 在 V15 的真实内部名**；
+2. `EndBasisChange` 失败与流体包中**没有任何组分**高度相关，需要把组分添加放进同一个 Basis 变更（当前驱动拆成两个方法、先 End 再加组分，需重构）；
+3. `FluidPackages.Add(name)` 可以按名称创建流体包，避免后置 `Name` 改名；
+4. 新增两个只读诊断入口：
+   - `tools/read_open_fluid_packages.py`：手动建 PR Case 后读出真实 `PropertyPackageName` / `PropertyPackage.TypeName`；
+   - `tools/probe_hysys_property_package.py` v2：带 Methane 组分测试“先加组分/先设 PP”、`Add(name)`、`Add(name, Type)`。
+
+最终驱动修复需等这两个输出后一次完成。
 
 ---
 

@@ -31,7 +31,8 @@ chem_ai_model/
 │   ├── main.py            # 入口 / 调度层 + CLI
 │   └── test_stage1.py     # 阶段1 联调入口（dry-run / 真实 HYSYS）
 ├── tools/
-│   └── probe_hysys_property_package.py  # 物性包 COM API 诊断探针
+│   ├── probe_hysys_property_package.py  # 物性包 COM API 诊断探针
+│   └── read_open_fluid_packages.py      # 只读导出当前 Case/流体包/真实物性包名
 ├── doc/
 │   └── ARCHITECTURE.md    # 分层架构、接口、COM 可信度、扩展点
 ├── output/                # .hsc 输出目录
@@ -65,7 +66,16 @@ python src\test_stage1.py --no-visible
 python src\test_stage1.py --no-visible --log-level DEBUG
 ```
 
-如果在物性包设置处遇到 COM 错误（如 `0x80070057`），运行诊断探针并把
+如果在物性包设置处遇到 COM 错误（如 `0x80070057`），可以：
+
+1. 在 HYSYS GUI 中手动新建一个含 **Peng-Robinson + Methane** 的 Case 并保持打开；
+2. 运行只读导出，确认 V15 实际使用的 `PropertyPackageName`：
+
+```bat
+python tools\read_open_fluid_packages.py
+```
+
+3. 运行诊断探针（含组分、Add 名称参数、设置顺序矩阵），并把
 `output/probe_hysys_property_package_report.txt` 发回来：
 
 ```bat
