@@ -30,6 +30,8 @@ chem_ai_model/
 │   ├── nlp_parser.py      # 自然语言解析（阶段1规则占位，本地可跑）
 │   ├── main.py            # 入口 / 调度层 + CLI
 │   └── test_stage1.py     # 阶段1 联调入口（dry-run / 真实 HYSYS）
+├── tools/
+│   └── probe_hysys_property_package.py  # 物性包 COM API 诊断探针
 ├── doc/
 │   └── ARCHITECTURE.md    # 分层架构、接口、COM 可信度、扩展点
 ├── output/                # .hsc 输出目录
@@ -61,6 +63,13 @@ python src\test_stage1.py --no-visible
 
 ```bat
 python src\test_stage1.py --no-visible --log-level DEBUG
+```
+
+如果在物性包设置处遇到 COM 错误（如 `0x80070057`），运行诊断探针并把
+`output/probe_hysys_property_package_report.txt` 发回来：
+
+```bat
+python tools\probe_hysys_property_package.py
 ```
 
 ## 单位约定

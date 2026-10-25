@@ -25,6 +25,7 @@ htmlcov/
 *.hsc
 *.hsc.bak
 output/*.hsc
+output/probe_*
 
 # 环境 / 密钥
 .env

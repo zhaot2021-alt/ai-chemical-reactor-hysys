@@ -223,7 +223,7 @@ HYSYSDriver（仅远程）
 |---|---|---|
 | `SimulationCases.Add(name)` 的参数签名 | 先试带名，再回退无参 `Add()` | 【需要在Excel VBA Object Browser核对】 |
 | `FluidPackage.Name` 是否可写（流体包改名） | best-effort；失败则保留 HYSYS 默认名（如 `Basis-1`） | 【需要在Excel VBA Object Browser核对】 |
-| `FluidPackage.PropertyPackageName` 可写性 / V15 内部名 | 主用 `PengRobinson`，备用 `Peng-Robinson`；全部失败则明确报错 | 【需要在Excel VBA Object Browser核对】 |
+| `FluidPackage.PropertyPackageName` 可写性 / V15 内部名 | 单次尝试 `PengRobinson`，且必须**先于** `FluidPackage.Name` 改名；失败则提示运行 `tools/probe_hysys_property_package.py` | 【需要在Excel VBA Object Browser核对】 |
 | `SimulationCase.Close(False)` 参数签名 | 失败回退 `Close()`；正常流程先 `SaveAs`，避免弹保存框 | 【需要在Excel VBA Object Browser核对】 |
 | `Flowsheet.FluidPackage = fp`（Make Current） | **未实现**：公开资料显示该属性主要用于读取；阶段1只有一个流体包，HYSYS 自动关联 | 待确认后再扩展 |
 | `Components.Add("H2O")` 对水的接受度 | 标准 ID 用 `H2O`；失败时尝试官方同义名 `Water` 并告警 | 回退策略，不改变标准 ID |
@@ -382,6 +382,31 @@ python src\test_stage1.py --no-visible --log-level DEBUG
 - 流体包名称 best-effort，失败时 HYSYS 默认命名（如 `Basis-1`）；
 - 仅支持单一流体包；多流体包 Make Current 待核对；
 - HYSYS COM 部分接口签名需在 V15 Object Browser 核对（见 ⑤）。
+
+---
+
+## ⑫ 远程联调记录（2026-10-26）
+
+已在远程 HYSYS V15 工作站（Python 3.12.4 64 位、pywin32 311）完成：
+
+1. 本地/远程 dry-run 通过（10 标准组分、单位换算正确）；
+2. COM 连接、`SimulationCases.Add`、`FluidPackages.Add`、`FluidPackage.Name` 成功；
+3. 在 `PropertyPackageName = "PengRobinson"/"Peng-Robinson"` 处返回
+   `HRESULT=0x80020009`、`excepinfo scode=0x80070057 (E_INVALIDARG)`，
+   随后 `EndBasisChange` 返回 `E_FAIL`。
+
+观察到改名发生在设置物性包之前。当前处理：
+
+- 驱动改为**先设置物性包、成功后再 best-effort 改名**；
+- 物性包名只尝试一次，避免第二次失败把 Basis 状态进一步污染；
+- 新增 `tools/probe_hysys_property_package.py`：
+  - 导出 `BasisManager` / `FluidPackages` / `FluidPackage` 的 COM 成员表
+    （含 `GET` / `PUT` / `PUTREF`，判断属性是否可写）；
+  - 在独立临时 Case 中测试多种设置顺序和内部名
+    （`PengRobinson` / `PR` / `HysysPR` / `SRK`），输出到
+    `output/probe_hysys_property_package_report.txt`。
+
+修复顺序只是当前假设，需要远程复测确认；若仍失败，以探针输出为准修正。
 
 ---
 
