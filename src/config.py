@@ -45,8 +45,10 @@ FLUID_PACKAGE_NAME = "PR_FluidPkg"
 
 # HYSYS Automation 必须使用物性包“内部名称”。
 # Aspen 文档示例：PropertyPackageName = "PengRobinson"（无连字符）。
+# 2026-10-26 远程 V15 联调：先改 FluidPackage.Name 再设 PP 会返回
+# 0x80070057 E_INVALIDARG；驱动已改为“先设 PP、后改名”，失败时用
+# tools/probe_hysys_property_package.py 导出真实对象模型再修正。
 PROPERTY_PACKAGE_NAME = "PengRobinson"
-PROPERTY_PACKAGE_ALTERNATIVE_NAMES = ("Peng-Robinson",)  # 备用拼写，按顺序尝试
 
 # ==================== HYSYS 标准组分 ID ====================
 # 注意：必须使用 HYSYS 组分库中的标准 Simulation Name：

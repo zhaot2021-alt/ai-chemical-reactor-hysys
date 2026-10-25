@@ -412,17 +412,12 @@ class HYSYSDriver:
             )
 
         target_name = (name or config.FLUID_PACKAGE_NAME).strip()
-        property_candidates = _unique(
-            [
-                property_package or config.PROPERTY_PACKAGE_NAME,
-                *config.PROPERTY_PACKAGE_ALTERNATIVE_NAMES,
-            ]
-        )
+        selected = (property_package or config.PROPERTY_PACKAGE_NAME).strip()
 
         self.logger.info(
-            "创建流体包（目标名称=%s，物性包候选=%s）...",
+            "创建流体包（目标名称=%s，物性包=%s）...",
             target_name,
-            property_candidates,
+            selected,
         )
 
         with self._basis_change("create_fluid_package"):
@@ -432,6 +427,26 @@ class HYSYSDriver:
                 raise HYSYSDriverError(
                     "FluidPackages.Add() 失败："
                     f"{_com_error_detail(exc)}"
+                ) from exc
+
+            # 【重要顺序】先选物性包，再改流体包名称。
+            # 远程 V15 实测：先执行 FluidPackage.Name 改名，再设
+            # PropertyPackageName 会报 0x80070057 E_INVALIDARG；
+            # 因此 Name 改名必须放在物性包设置成功之后（且仍属 best-effort）。
+            #
+            # PropertyPackageName 使用 HYSYS Automation 内部名。
+            # 【需要在Excel VBA Object Browser核对】该属性在 V15 的可写性与内部名称；
+            # 若这里失败，请运行 tools/probe_hysys_property_package.py 导出真实成员表。
+            try:
+                fluid_pkg.PropertyPackageName = selected
+                self.logger.info("物性包已设置：%s", selected)
+            except Exception as exc:  # noqa: BLE001
+                raise HYSYSDriverError(
+                    f"设置物性包 {selected!r} 失败：{_com_error_detail(exc)}。"
+                    "已确认 PropertyPackageName 调用存在，但值或状态不被 V15 接受。"
+                    "请运行：python tools\\probe_hysys_property_package.py，"
+                    "并把输出报告发回来，以便按 V15 真实对象模型修正。"
+                    "【需要在Excel VBA Object Browser核对】"
                 ) from exc
 
             # 流体包改名属于 best-effort（不影响后续建模）
@@ -449,32 +464,6 @@ class HYSYSDriver:
                     "若名称不影响流程，可忽略"
                 )
 
-            # 选择物性包：只尝试 PropertyPackageName（FluidPackage.PropPackage 是只读对象）
-            # 【需要在Excel VBA Object Browser核对】PropertyPackageName 的可写性与内部名称
-            selected: str | None = None
-            property_errors: list[str] = []
-            for candidate in property_candidates:
-                try:
-                    fluid_pkg.PropertyPackageName = candidate
-                    selected = candidate
-                    break
-                except Exception as exc:  # noqa: BLE001
-                    property_errors.append(
-                        f"{candidate}: {_com_error_detail(exc)}"
-                    )
-                    self.logger.warning(
-                        "设置物性包 %s 失败，尝试下一个候选", candidate
-                    )
-
-            if selected is None:
-                raise HYSYSDriverError(
-                    "设置物性包 Peng-Robinson 失败，所有候选均报错："
-                    + " | ".join(property_errors)
-                    + "。【需要在Excel VBA Object Browser核对】"
-                    "FluidPackage.PropertyPackageName 的可写性与内部名称"
-                )
-
-            self.logger.info("物性包已设置：%s", selected)
             self.logger.debug(
                 "FluidPackage COM 对象：%s", _safe_repr(fluid_pkg)
             )
