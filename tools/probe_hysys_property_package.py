@@ -396,6 +396,12 @@ def main() -> int:
             app, "G_srk_add_type", "SRK",
             order="comp_first", add_with_type=True,
         )
+        run_component_test(
+            app, "H_pengrob_comp_first", "pengrob", order="comp_first"
+        )
+        run_component_test(
+            app, "I_pengrob_pp_first", "pengrob", order="pp_first"
+        )
     except Exception as exc:  # noqa: BLE001
         report(f"探针异常：{com_detail(exc)}")
         report(traceback.format_exc())

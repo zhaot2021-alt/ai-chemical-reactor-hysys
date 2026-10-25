@@ -43,12 +43,19 @@ HYSYS_MOLAR_FLOW_UNIT = "kgmole/h"   # HYSYS 的 kgmole ≡ kmol，1 kgmole = 10
 # 驱动层会 best-effort 设置 FluidPackage.Name；若该属性不可写，HYSYS 将使用默认名（如 Basis-1）。
 FLUID_PACKAGE_NAME = "PR_FluidPkg"
 
-# HYSYS Automation 必须使用物性包“内部名称”。
-# Aspen 文档示例：PropertyPackageName = "PengRobinson"（无连字符）。
-# 2026-10-26 远程 V15 联调：先改 FluidPackage.Name 再设 PP 会返回
-# 0x80070057 E_INVALIDARG；驱动已改为“先设 PP、后改名”，失败时用
-# tools/probe_hysys_property_package.py 导出真实对象模型再修正。
-PROPERTY_PACKAGE_NAME = "PengRobinson"
+# HYSYS V15 实测（2026-10-26，手动 PR Case + tools/read_open_fluid_packages.py）：
+#   FluidPackage.PropertyPackageName (读) = 'Peng-Robinson'   ← 显示名
+#   FluidPackage.PropertyPackage.TypeName   = 'pengrob'       ← 内部 token
+#   PropertyPackageName = 'pengrob' 才是 V15 Setter 接受的内部名；
+#   'PengRobinson' / 'Peng-Robinson' / 'PR' / 'HysysPR' 均被拒绝。
+# 另：FluidPackages.Add('名称') 可创建时直接命名；组分必须在 EndBasisChange 前加入。
+PROPERTY_PACKAGE_NAME = "pengrob"                   # Setter 内部 token
+PROPERTY_PACKAGE_DISPLAY_NAME = "Peng-Robinson"     # 读回/报告用显示名
+PROPERTY_PACKAGE_ALIASES = {                        # 兼容调用方传入显示名
+    "pengrob": "pengrob",
+    "PengRobinson": "pengrob",
+    "Peng-Robinson": "pengrob",
+}
 
 # ==================== HYSYS 标准组分 ID ====================
 # 注意：必须使用 HYSYS 组分库中的标准 Simulation Name：

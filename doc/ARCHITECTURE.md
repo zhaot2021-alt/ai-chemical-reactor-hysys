@@ -55,7 +55,7 @@
 | COM 生命周期 | `HYSYS_PROGID`、`HYSYS_ATTACH_EXISTING`、`HYSYS_QUIT_ATTACHED`、`HYSYS_SHUTDOWN_WAIT_S` |
 | HYSYS 内部单位 | `HYSYS_TEMPERATURE_UNIT="K"`、`HYSYS_PRESSURE_UNIT="kPa"`、`HYSYS_MOLAR_FLOW_UNIT="kgmole/h"` |
 | 标准组分 | `STANDARD_COMPONENT_IDS`（10 个）、`COMPONENT_ALIASES`、`COMPONENT_ID_FALLBACKS` |
-| 流体包 | `FLUID_PACKAGE_NAME`、`PROPERTY_PACKAGE_NAME="PengRobinson"`、备用拼写 |
+| 流体包 | `FLUID_PACKAGE_NAME`、`PROPERTY_PACKAGE_NAME="pengrob"`、`PROPERTY_PACKAGE_DISPLAY_NAME="Peng-Robinson"` |
 | 默认进料 | `DEFAULT_FEED_CONDITIONS`（25℃ / 1 bar / 100 kmol·h⁻¹） |
 | 单位换算 | `c_to_k`、`k_to_c`、`bar_to_kpa`、`kpa_to_bar`、`mpa_to_bar`、`kmolh_to_kgmoleh`、`pressure_to_bar`、`molar_flow_to_kmolh` |
 | LLM 占位 | `LLM_CONFIG`（阶段1不发起网络请求） |
@@ -111,8 +111,8 @@
 | `connect()` | `None` | 优先附着已运行实例；否则 Dispatch + 重试 |
 | `shutdown()` | `None` | 幂等释放：关 Case → Quit（视归属）→ CoUninitialize → tasklist 检查 |
 | `new_case(name=None)` | `str` | 新建空白 Case，返回名称 |
-| `create_fluid_package(name=None, property_package=None)` | `str` | 创建流体包 + 设置 Peng-Robinson |
-| `add_components(ids)` | `tuple[str, ...]` | 添加标准组分，重复自动跳过 |
+| `create_fluid_package(name=None, property_package=None, components=None)` | `str` | 创建流体包 + 设置物性包 + **在同一 Basis 内加组分** |
+| `add_components(ids)` | `tuple[str, ...]` | 后续追加标准组分，重复自动跳过 |
 | `create_material_stream(name, T_K, P_kPa, F_kgmole/h)` | `dict` | 建物流并设置内部单位参数，返回安全状态字典 |
 | `read_stream_values(name)` | `dict` | 只读温度/压力/摩尔流量，**不暴露 COM** |
 | `save_case(path=None)` | `str` | 保存 `.hsc`，返回绝对路径 |
@@ -175,8 +175,9 @@ main._to_internal_units()             ← 仅调用 config 换算函数
 HYSYSDriver（仅远程）
   ├─ connect()
   ├─ new_case()
-  ├─ create_fluid_package("PengRobinson")
-  ├─ add_components([...10 个标准 ID...])
+  ├─ create_fluid_package(property_package="pengrob",
+  │                        components=[...10 个标准 ID...])
+  │    └─ 同一个 Basis：Add(name) → 设 PP → 加组分 → End
   ├─ create_material_stream("FEED", T_K, P_kPa, F)
   ├─ save_case("output/xxx.hsc")
   └─ shutdown()  ← finally 保证执行
@@ -210,7 +211,8 @@ HYSYSDriver（仅远程）
 | `SimulationCases.Add(name)`、`Case.Visible` | 新建并显示 Case |
 | `BasisManager.StartBasisChange()` / `EndBasisChange()` | Basis 修改通知（官方 Customization Guide 要求） |
 | `BasisManager.FluidPackages.Add(name, Type)` | 新建流体包；V15 类型库显示两个参数，`Add(name)` 有官方示例、`Type` 可选 |
-| `FluidPackage.PropertyPackageName` | 物性包名；V15 类型库确认 GET + PUT 都存在 |
+| `FluidPackage.PropertyPackageName` | Setter 用内部 token（PR=`pengrob`）；读取返回显示名（`Peng-Robinson`） |
+| `FluidPackage.PropertyPackage.TypeName` | 内部 token（V15 PR=`pengrob`）；手动 PR Case 实证 |
 | `FluidPackage.PropertyPackage` | V15 实际返回物性包对象；`PropPackage` 在 V15 不存在 |
 | `FluidPackage.Components.Add("Methane")` | 添加标准组分 |
 | `Flowsheet.MaterialStreams.Add("FEED")` | 新建物流（VBA 公开示例） |
@@ -223,8 +225,8 @@ HYSYSDriver（仅远程）
 | 待核对项 | 当前处理 | 标记 |
 |---|---|---|
 | `SimulationCases.Add(name)` 的参数签名 | 先试带名，再回退无参 `Add()` | 【需要在Excel VBA Object Browser核对】 |
-| `FluidPackage.Name` 是否可写（流体包改名） | best-effort；失败则保留 HYSYS 默认名（如 `Basis-1`） | 【需要在Excel VBA Object Browser核对】 |
-| `FluidPackage.PropertyPackageName` 可写性 / V15 内部名 | 单次尝试 `PengRobinson`，且必须**先于** `FluidPackage.Name` 改名；失败则提示运行 `tools/probe_hysys_property_package.py` | 【需要在Excel VBA Object Browser核对】 |
+| `FluidPackage.Name` 是否可写（流体包改名） | **不再使用**：改用官方示例 `FluidPackages.Add(name)` 创建时命名；回退 `Add()` 时才可能得到 `Basis-1` | 已由 Add(name) 替代 |
+| `PropertyPackageName = "pengrob"` 的写入 | 依据手动 PR Case 的 `PropertyPackage.TypeName='pengrob'` + SRK Setter 成功；驱动采用该 token，**待远程复测 PR** | 【需要在Excel VBA Object Browser核对】 |
 | `SimulationCase.Close(False)` 参数签名 | 失败回退 `Close()`；正常流程先 `SaveAs`，避免弹保存框 | 【需要在Excel VBA Object Browser核对】 |
 | `Flowsheet.FluidPackage = fp`（Make Current） | **未实现**：公开资料显示该属性主要用于读取；阶段1只有一个流体包，HYSYS 自动关联 | 待确认后再扩展 |
 | `Components.Add("H2O")` 对水的接受度 | 标准 ID 用 `H2O`；失败时尝试官方同义名 `Water` 并告警 | 回退策略，不改变标准 ID |
@@ -380,8 +382,9 @@ python src\test_stage1.py --no-visible --log-level DEBUG
 - 未创建任何反应器；反应器类型字段仅规则占位提示；
 - 规则解析对多温度场景（进料 vs 出口）无法区分，阶段2必须用 LLM 语义解析；
 - 公斤/小时流量未换算；
-- 流体包名称 best-effort，失败时 HYSYS 默认命名（如 `Basis-1`）；
+- 流体包名称通过 `FluidPackages.Add(name)` 创建时指定；回退 `Add()` 时可能为 `Basis-1`；
 - 仅支持单一流体包；多流体包 Make Current 待核对；
+- `PropertyPackageName = "pengrob"` 正在做最终远程复测（依据手动 PR Case 的 `TypeName`）；
 - HYSYS COM 部分接口签名需在 V15 Object Browser 核对（见 ⑤）。
 
 ---
@@ -396,50 +399,58 @@ python src\test_stage1.py --no-visible --log-level DEBUG
    `HRESULT=0x80020009`、`excepinfo scode=0x80070057 (E_INVALIDARG)`，
    随后 `EndBasisChange` 返回 `E_FAIL`。
 
-观察到改名发生在设置物性包之前。当前处理：
-
-- 驱动改为**先设置物性包、成功后再 best-effort 改名**；
-- 物性包名只尝试一次，避免第二次失败把 Basis 状态进一步污染；
-- 新增 `tools/probe_hysys_property_package.py`：
-  - 导出 `BasisManager` / `FluidPackages` / `FluidPackage` 的 COM 成员表
-    （含 `GET` / `PUT` / `PUTREF`，判断属性是否可写）；
-  - 在独立临时 Case 中测试多种设置顺序和内部名
-    （`PengRobinson` / `PR` / `HysysPR` / `SRK`），输出到
-    `output/probe_hysys_property_package_report.txt`。
-
-修复顺序只是当前假设，需要远程复测确认；若仍失败，以探针输出为准修正。
-
-### 探针 v1 的补充发现（2026-10-26）
-
-远程 `ITypeInfo` 导出得到：
+远程 `ITypeInfo` 与探针结果：
 
 ```text
-FluidPackages.Add            FUNC  params=['name', 'Type']
+FluidPackages.Add                 FUNC   params=['name', 'Type']
 FluidPackage.PropertyPackageName  GET + PUT
 FluidPackage.PropertyPackage      GET
 FluidPackage.PropPackage          —— V15 不存在
 FluidPackage.name                 GET + PUT
 ```
 
-关键实验：
+关键实验（探针 v1/v2）：
 
 | 测试 | 结果 |
 |---|---|
-| `PropertyPackageName = "SRK"` | **成功**（说明属性可写） |
-| `PropertyPackageName = "PengRobinson"` / `"Peng-Robinson"` / `"PR"` / `"HysysPR"` | 均 `0x80070057 E_INVALIDARG` |
-| 所有测试的 `EndBasisChange` | `E_FAIL` |
-| `Solver.CanSolve = False` | `0x80070005 E_ACCESSDENIED` |
+| 手动 GUI 建 PR Case：读 `PropertyPackageName` | `'Peng-Robinson'`（显示名） |
+| 同一 PR Case：读 `PropertyPackage.TypeName` | **`'pengrob'`（内部 token）** |
+| `PropertyPackageName = "SRK"`（有/无组分、两种顺序） | **成功**，且 `EndBasisChange` 成功 |
+| `PropertyPackageName` 设 `"PengRobinson"/"Peng-Robinson"/"PR"/"HysysPR"` | 均 `0x80070057 E_INVALIDARG` |
+| `FluidPackages.Add("名称")` | 成功，流体包直接按名称创建 |
+| `FluidPackages.Add("名称", "PengRobinson")` | 创建成功，但**不会**选择物性包（Type 不是物性包选择器） |
+| 没有组分的 Basis 调 `EndBasisChange` | `E_FAIL` |
+| `Solver.CanSolve = False` | `0x80070005 E_ACCESSDENIED`（此状态下不可用） |
 
-结论与待办：
+最终结论（2026-10-26）：
 
-1. 物性包属性确实可写，当前问题是 **Peng-Robinson 在 V15 的真实内部名**；
-2. `EndBasisChange` 失败与流体包中**没有任何组分**高度相关，需要把组分添加放进同一个 Basis 变更（当前驱动拆成两个方法、先 End 再加组分，需重构）；
-3. `FluidPackages.Add(name)` 可以按名称创建流体包，避免后置 `Name` 改名；
-4. 新增两个只读诊断入口：
-   - `tools/read_open_fluid_packages.py`：手动建 PR Case 后读出真实 `PropertyPackageName` / `PropertyPackage.TypeName`；
-   - `tools/probe_hysys_property_package.py` v2：带 Methane 组分测试“先加组分/先设 PP”、`Add(name)`、`Add(name, Type)`。
+1. V15 `PropertyPackageName` 的 **Setter token 用 `pengrob`**；读取返回值是显示名 `Peng-Robinson`。
+   旧值 `PengRobinson` / `Peng-Robinson` / `PR` / `HysysPR` 均无效；
+2. 流体包用官方示例 `FluidPackages.Add(name)` 创建时命名，避免后置改 `Name`；
+3. 组分必须与流体包创建处于**同一个 Basis 变更**，在 `EndBasisChange` 之前添加；
+4. 驱动已重构为：
 
-最终驱动修复需等这两个输出后一次完成。
+```text
+StartBasisChange
+  FluidPackages.Add("PR_FluidPkg")
+  PropertyPackageName = "pengrob"
+  Components.Add(...) × N
+EndBasisChange
+```
+
+`config.PROPERTY_PACKAGE_NAME` 已改为 `pengrob`，并新增
+`PROPERTY_PACKAGE_DISPLAY_NAME="Peng-Robinson"`、`PROPERTY_PACKAGE_ALIASES`。
+驱动 `create_fluid_package(components=...)` 负责同 Basis 加组分；
+`add_components()` 仅用于后续追加。
+
+诊断工具保留：
+
+- `tools/read_open_fluid_packages.py`：只读导出当前 Case 的流体包、真实 PP 名、TypeName、组分；
+- `tools/probe_hysys_property_package.py` v2：类型库成员、`Add(name)`、带组分顺序矩阵、`pengrob` 候选；
+- 报告：`output/probe_hysys_property_package_report.txt`。
+
+> 状态：驱动修复已通过本地假 COM 顺序测试；**`pengrob` 的远程写入仍需最终复测**。
+> 若复测失败，以探针 H/I（`pengrob` 两种顺序）结果为准。
 
 ---
 

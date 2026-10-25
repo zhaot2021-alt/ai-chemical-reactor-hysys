@@ -395,15 +395,19 @@ class HYSYSDriver:
         self,
         name: str | None = None,
         property_package: str | None = None,
+        components: Sequence[str] | None = None,
     ) -> str:
         """
-        创建流体包并设置物性包（默认 Peng-Robinson）。
-        返回流体包实际名称（若 Name 不可写则为 HYSYS 默认名）。
-        组分由 add_components() 单独添加。
+        创建流体包 + 设置物性包 + 在**同一个 Basis 变更**中加入组分。
 
-        COM 调用依据：
-          - FluidPackages.Add()：公开模板印证（不带名称参数）
-          - PropertyPackageName：公开模板 / Aspen 文档印证，使用内部名 "PengRobinson"
+        HYSYS V15 实测要点（2026-10-26）：
+          - FluidPackages.Add("名称") 可按名称创建（官方 FAQ 示例 Add "Steam"）
+          - PropertyPackageName 的 Setter 使用内部 token：
+              Peng-Robinson -> "pengrob"；读回值则是显示名 "Peng-Robinson"
+          - 组分必须在 EndBasisChange 之前加入；空 Basis 的 End 会 E_FAIL
+          - FluidPackage.Name 不要在设置物性包之前修改（V15 会破坏 Setter 状态）
+
+        components 必须非空（阶段1的流体包至少需要一个组分）。
         """
         self._require_case()
         if self._fluid_pkg is not None:
@@ -412,61 +416,60 @@ class HYSYSDriver:
             )
 
         target_name = (name or config.FLUID_PACKAGE_NAME).strip()
-        selected = (property_package or config.PROPERTY_PACKAGE_NAME).strip()
+        requested_pp = (property_package or config.PROPERTY_PACKAGE_NAME).strip()
+        pp_token = config.PROPERTY_PACKAGE_ALIASES.get(requested_pp, requested_pp)
+
+        if not components or isinstance(components, str):
+            raise ValueError(
+                "create_fluid_package 必须提供非空的 components；"
+                "HYSYS 不接受没有组分的空 Basis（EndBasisChange 会失败）"
+            )
+        component_ids = self._validate_component_ids(components)
 
         self.logger.info(
-            "创建流体包（目标名称=%s，物性包=%s）...",
+            "创建流体包（名称=%s，物性包 token=%s，组分=%d 个）...",
             target_name,
-            selected,
+            pp_token,
+            len(component_ids),
         )
 
+        added: list[str] = []
+        failures: list[str] = []
+        actual_pp_display = config.PROPERTY_PACKAGE_DISPLAY_NAME
+
         with self._basis_change("create_fluid_package"):
+            fluid_pkg = self._add_fluid_package(target_name)
+
+            # 先设物性包内部 token，再在同一 Basis 中加组分
+            # V15 Peng-Robinson 的 Setter token 为 "pengrob"
             try:
-                fluid_pkg = self._case.BasisManager.FluidPackages.Add()
+                fluid_pkg.PropertyPackageName = pp_token
             except Exception as exc:  # noqa: BLE001
                 raise HYSYSDriverError(
-                    "FluidPackages.Add() 失败："
-                    f"{_com_error_detail(exc)}"
+                    f"设置物性包 token={pp_token!r} 失败："
+                    f"{_com_error_detail(exc)}。"
+                    "请确认 config.PROPERTY_PACKAGE_NAME（Peng-Robinson 应为 'pengrob'）；"
+                    "可运行 tools/read_open_fluid_packages.py 对照手动 PR Case。"
                 ) from exc
 
-            # 【重要顺序】先选物性包，再改流体包名称。
-            # 远程 V15 实测：先执行 FluidPackage.Name 改名，再设
-            # PropertyPackageName 会报 0x80070057 E_INVALIDARG；
-            # 因此 Name 改名必须放在物性包设置成功之后（且仍属 best-effort）。
-            #
-            # PropertyPackageName 使用 HYSYS Automation 内部名。
-            # 【需要在Excel VBA Object Browser核对】该属性在 V15 的可写性与内部名称；
-            # 若这里失败，请运行 tools/probe_hysys_property_package.py 导出真实成员表。
-            try:
-                fluid_pkg.PropertyPackageName = selected
-                self.logger.info("物性包已设置：%s", selected)
-            except Exception as exc:  # noqa: BLE001
-                raise HYSYSDriverError(
-                    f"设置物性包 {selected!r} 失败：{_com_error_detail(exc)}。"
-                    "已确认 PropertyPackageName 调用存在，但值或状态不被 V15 接受。"
-                    "请运行：python tools\\probe_hysys_property_package.py，"
-                    "并把输出报告发回来，以便按 V15 真实对象模型修正。"
-                    "【需要在Excel VBA Object Browser核对】"
-                ) from exc
+            actual_pp_display = self._read_property_package_display(fluid_pkg)
+            self.logger.info(
+                "物性包已设置：token=%s，读回显示名=%s",
+                pp_token,
+                actual_pp_display,
+            )
 
-            # 流体包改名属于 best-effort（不影响后续建模）
-            # 【需要在Excel VBA Object Browser核对】FluidPackage.Name 是否可写
-            try:
-                fluid_pkg.Name = target_name
-                self.logger.info("流体包名称已设置为：%s", target_name)
-            except Exception as exc:  # noqa: BLE001
-                self.logger.warning(
-                    "无法通过 COM 设置流体包名称（HYSYS 将使用默认名，如 Basis-1）：%s",
-                    _com_error_detail(exc),
-                )
-                self.logger.warning(
-                    "【需要在Excel VBA Object Browser核对】FluidPackage.Name 是否可写；"
-                    "若名称不影响流程，可忽略"
-                )
-
+            added, failures = self._add_components_uncommitted(
+                fluid_pkg, component_ids
+            )
             self.logger.debug(
                 "FluidPackage COM 对象：%s", _safe_repr(fluid_pkg)
             )
+
+        # 到这里 EndBasisChange 已成功（_basis_change 会在 End 失败时抛异常）
+
+        if failures:
+            raise HYSYSDriverError(self._component_failure_message(failures))
 
         # 说明：此处不调用 case.Flowsheet.FluidPackage = fp 做 Make Current。
         # 公开资料显示 Flowsheet.FluidPackage 主要用于读取当前流体包，可写性未确认；
@@ -475,96 +478,179 @@ class HYSYSDriver:
         # 【需要在Excel VBA Object Browser核对】对应接口，再扩展本方法。
 
         self._fluid_pkg = fluid_pkg
-        self._property_package_name = selected
+        self._component_ids.extend(added)
+        self._property_package_name = actual_pp_display
         self._fluid_pkg_name = self._read_com_name(fluid_pkg, target_name)
-        self.logger.info("流体包已创建：%s", self._fluid_pkg_name)
+        self.logger.info(
+            "流体包已创建：%s（物性包=%s，已加组分=%s）",
+            self._fluid_pkg_name,
+            self._property_package_name,
+            added,
+        )
         return self._fluid_pkg_name
 
     def add_components(self, component_ids: Sequence[str]) -> tuple[str, ...]:
         """
-        向当前流体包添加 HYSYS 标准组分。
+        向已创建的流体包追加 HYSYS 标准组分（阶段2/后续扩展用）。
         返回本次新添加的标准 ID 元组；重复 ID 自动跳过。
+
+        注意：阶段1 的主流程把组分放在 create_fluid_package(components=...)
+        的同一个 Basis 变更里添加；本方法用于之后单独追加组分。
 
         component_ids 必须是 config.STANDARD_COMPONENT_IDS 中的标准 ID，
         不接受任意别名（别名 → 标准 ID 的映射由 nlp_parser 完成）。
         """
         self._require_fluid_pkg()
-
-        if isinstance(component_ids, str) or not component_ids:
-            raise ValueError("component_ids 必须是非空的组分 ID 序列")
-
-        requested = [str(item).strip() for item in component_ids]
-        unknown = [item for item in requested if item not in config.STANDARD_COMPONENT_IDS]
-        if unknown:
-            raise HYSYSDriverError(
-                f"检测到非标准组分 ID：{unknown}；"
-                f"允许的标准 ID 见 config.STANDARD_COMPONENT_IDS：{list(config.STANDARD_COMPONENT_IDS)}"
-            )
-
+        requested = self._validate_component_ids(component_ids)
         pending = [
-            item for item in _unique(requested) if item not in self._component_ids
+            item for item in requested if item not in self._component_ids
         ]
         if not pending:
             self.logger.info("所有组分均已添加，跳过：%s", requested)
             return ()
 
-        self.logger.info("添加组分：%s", pending)
+        self.logger.info("追加组分：%s", pending)
         added: list[str] = []
         failures: list[str] = []
 
         with self._basis_change("add_components"):
-            for component_id in pending:
-                candidates = (component_id, *config.COMPONENT_ID_FALLBACKS.get(component_id, ()))
-                last_error: BaseException | None = None
-                success = False
-
-                for candidate in candidates:
-                    try:
-                        # 官方 Customization Guide：FluidPackage.Components.Add(组分名)
-                        component_obj = self._fluid_pkg.Components.Add(candidate)
-                        self._component_ids.append(component_id)
-                        added.append(component_id)
-                        success = True
-                        if candidate != component_id:
-                            self.logger.warning(
-                                "组分 %s 以同义名 %s 添加成功（标准 Sim Name 仍为 %s）",
-                                component_id,
-                                candidate,
-                                component_id,
-                            )
-                        else:
-                            self.logger.info("已添加组分：%s", component_id)
-                        self.logger.debug(
-                            "Components.Add 返回对象：%s", _safe_repr(component_obj)
-                        )
-                        # 不保留组分 COM 引用，避免延长其生命周期
-                        component_obj = None
-                        break
-                    except Exception as exc:  # noqa: BLE001
-                        last_error = exc
-                        self.logger.debug(
-                            "组分 %s（尝试名 %s）添加失败：%s",
-                            component_id,
-                            candidate,
-                            _com_error_detail(exc),
-                        )
-
-                if not success:
-                    failures.append(
-                        f"{component_id}（尝试 {list(candidates)}，最后错误："
-                        f"{_com_error_detail(last_error) if last_error else '未知'}）"
-                    )
-
-        if failures:
-            raise HYSYSDriverError(
-                "部分组分添加失败：" + " | ".join(failures)
-                + "。【需要在Excel VBA Object Browser核对】"
-                "FluidPackage.Components.Add 的组分名；"
-                "请在 HYSYS 组分库 GUI 中确认 Sim Name（如 H2O / Hydrogen / o-Xylene）"
+            added, failures = self._add_components_uncommitted(
+                self._fluid_pkg, pending
             )
+
+        self._component_ids.extend(added)
+        if failures:
+            raise HYSYSDriverError(self._component_failure_message(failures))
 
         self.logger.info("组分添加完成：%s", added)
         return tuple(added)
+
+    def _add_fluid_package(self, target_name: str) -> Any:
+        """FluidPackages.Add(name) 优先；失败回退 Add()。"""
+        try:
+            fluid_pkg = self._case.BasisManager.FluidPackages.Add(target_name)
+            self.logger.info("FluidPackages.Add(name) 成功：%s", target_name)
+            return fluid_pkg
+        except Exception as first_exc:  # noqa: BLE001
+            self.logger.warning(
+                "FluidPackages.Add(name) 失败，回退 Add()：%s",
+                _com_error_detail(first_exc),
+            )
+            try:
+                return self._case.BasisManager.FluidPackages.Add()
+            except Exception as second_exc:  # noqa: BLE001
+                raise HYSYSDriverError(
+                    "创建流体包失败（Add(name) 与 Add() 均失败）："
+                    f"{_com_error_detail(second_exc)}"
+                ) from second_exc
+
+    def _validate_component_ids(
+        self, component_ids: Sequence[str]
+    ) -> list[str]:
+        if isinstance(component_ids, str) or not component_ids:
+            raise ValueError("component_ids 必须是非空的组分 ID 序列")
+
+        requested = [str(item).strip() for item in component_ids]
+        if any(not item for item in requested):
+            raise ValueError("component_ids 不能包含空字符串")
+
+        unknown = [
+            item for item in requested
+            if item not in config.STANDARD_COMPONENT_IDS
+        ]
+        if unknown:
+            raise HYSYSDriverError(
+                f"检测到非标准组分 ID：{unknown}；"
+                "允许的标准 ID 见 config.STANDARD_COMPONENT_IDS："
+                f"{list(config.STANDARD_COMPONENT_IDS)}"
+            )
+        return _unique(requested)
+
+    def _add_components_uncommitted(
+        self, fluid_pkg: Any, component_ids: Sequence[str]
+    ) -> tuple[list[str], list[str]]:
+        """
+        在当前已打开的 Basis 变更中添加组分；不调用 Start/EndBasisChange。
+        返回 (成功添加的 ID 列表, 失败描述列表)。
+        """
+        added: list[str] = []
+        failures: list[str] = []
+
+        for component_id in component_ids:
+            if component_id in self._component_ids:
+                continue
+
+            candidates = (
+                component_id,
+                *config.COMPONENT_ID_FALLBACKS.get(component_id, ()),
+            )
+            last_error: BaseException | None = None
+            success = False
+
+            for candidate in candidates:
+                try:
+                    # 官方 Customization Guide：FluidPackage.Components.Add(组分名)
+                    component_obj = fluid_pkg.Components.Add(candidate)
+                    added.append(component_id)
+                    success = True
+                    if candidate != component_id:
+                        self.logger.warning(
+                            "组分 %s 以同义名 %s 添加成功（标准 Sim Name 仍为 %s）",
+                            component_id,
+                            candidate,
+                            component_id,
+                        )
+                    else:
+                        self.logger.info("已添加组分：%s", component_id)
+                    self.logger.debug(
+                        "Components.Add 返回对象：%s", _safe_repr(component_obj)
+                    )
+                    component_obj = None  # 不保留组分 COM 引用
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    self.logger.debug(
+                        "组分 %s（尝试名 %s）添加失败：%s",
+                        component_id,
+                        candidate,
+                        _com_error_detail(exc),
+                    )
+
+            if not success:
+                failures.append(
+                    f"{component_id}（尝试 {list(candidates)}，最后错误："
+                    f"{_com_error_detail(last_error) if last_error else '未知'}）"
+                )
+
+        return added, failures
+
+    def _component_failure_message(self, failures: Sequence[str]) -> str:
+        return (
+            "部分组分添加失败：" + " | ".join(failures)
+            + "。请在 HYSYS 组分库 GUI 中确认 Sim Name"
+            "（如 H2O / Hydrogen / o-Xylene）"
+        )
+
+    def _read_property_package_display(self, fluid_pkg: Any) -> str:
+        """读回物性包显示名；失败时退回 PropertyPackage.TypeName / 配置值。"""
+        try:
+            value = fluid_pkg.PropertyPackageName
+            if value:
+                return str(value)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug(
+                "读取 PropertyPackageName 失败：%s", _com_error_detail(exc)
+            )
+        try:
+            value = fluid_pkg.PropertyPackage.TypeName
+            if value:
+                return str(value)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug(
+                "读取 PropertyPackage.TypeName 失败：%s",
+                _com_error_detail(exc),
+            )
+        return config.PROPERTY_PACKAGE_DISPLAY_NAME
 
     def create_material_stream(
         self,
@@ -758,8 +844,12 @@ class HYSYSDriver:
                 _com_error_detail(exc),
             )
 
+        had_original_error = False
         try:
             yield
+        except BaseException:
+            had_original_error = True
+            raise
         finally:
             try:
                 self._case.BasisManager.EndBasisChange()
@@ -770,6 +860,12 @@ class HYSYSDriver:
                     purpose,
                     _com_error_detail(exc),
                 )
+                if not had_original_error:
+                    raise HYSYSDriverError(
+                        f"EndBasisChange 失败（{purpose}）："
+                        f"{_com_error_detail(exc)}；"
+                        "Basis 可能仍处于 changing 状态，本 Case 不应继续使用"
+                    ) from exc
 
     def _set_stream_value(
         self,

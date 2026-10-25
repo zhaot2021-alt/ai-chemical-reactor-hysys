@@ -256,6 +256,7 @@ def run_stage1(
                 "case_name": final_case_name,
                 "fluid_package": config.FLUID_PACKAGE_NAME,
                 "property_package": config.PROPERTY_PACKAGE_NAME,
+                "property_package_display": config.PROPERTY_PACKAGE_DISPLAY_NAME,
                 "components": parsed["components"],
                 "feed_stream": {
                     "name": config.FEED_STREAM_NAME,
@@ -279,11 +280,14 @@ def run_stage1(
     try:
         driver.connect()
         actual_case_name = driver.new_case(final_case_name)
+        # 组分必须在 create_fluid_package 的同一个 Basis 变更中加完；
+        # 否则 EndBasisChange 会因为 Basis 为空而失败。
         fluid_package_name = driver.create_fluid_package(
             config.FLUID_PACKAGE_NAME,
             property_package=config.PROPERTY_PACKAGE_NAME,
+            components=parsed["components"],
         )
-        added_components = driver.add_components(parsed["components"])
+        added_components = driver.component_ids
         stream_state = driver.create_material_stream(
             config.FEED_STREAM_NAME,
             temperature_k=internal["temperature_k"],
@@ -301,7 +305,8 @@ def run_stage1(
             "case_name": actual_case_name,
             "fluid_package_name": fluid_package_name,
             "property_package_name": (
-                driver.property_package_name or config.PROPERTY_PACKAGE_NAME
+                driver.property_package_name
+                or config.PROPERTY_PACKAGE_DISPLAY_NAME
             ),
             "components_added": list(added_components),
             "feed_stream": stream_state,

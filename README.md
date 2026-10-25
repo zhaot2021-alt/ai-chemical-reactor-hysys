@@ -13,7 +13,7 @@
 
 - 连接 / 启动 HYSYS，异常安全退出
 - 新建 Simulation Case
-- 创建流体包并设置 Peng-Robinson（内部名 `PengRobinson`）
+- 创建流体包并设置 Peng-Robinson（Setter 内部 token `pengrob`，读回显示 `Peng-Robinson`）
 - 添加 10 个 HYSYS 标准组分
 - 新建物料流并设置温度 / 压力 / 摩尔流量
 - 保存 `.hsc`，显式释放 COM（防 `hysys.exe` 残留）
