@@ -77,6 +77,20 @@ STANDARD_COMPONENT_IDS = (
     "p-Xylene",
 )
 
+# 额外支持的标准组分 ID（来自本机 HYSYS V15 组分列表实测输出）
+ADDITIONAL_COMPONENT_IDS = (
+    "Hydrogen", "Nitrogen", "Oxygen", "CO",
+    "Ethylene", "Ethane", "Propene", "Propane",
+    "i-Butane", "n-Butane", "i-Butene", "1-Butene",
+    "13-Butadiene", "tr2-Butene", "cis2-Butene",
+    "i-Pentane", "n-Pentane", "1-Pentene",
+    "H2S", "Ethanol", "MTBE", "ETBE", "Ammonia",
+)
+
+KNOWN_COMPONENT_IDS = tuple(
+    dict.fromkeys(STANDARD_COMPONENT_IDS + ADDITIONAL_COMPONENT_IDS)
+)
+
 # 自然语言别名 → HYSYS 标准组分 ID（只做映射，不做解析逻辑）
 COMPONENT_ALIASES = {
     # 甲烷
@@ -112,6 +126,20 @@ COMPONENT_ALIASES = {
     "m-xylene": "m-Xylene",
     "对二甲苯": "p-Xylene",
     "p-xylene": "p-Xylene",
+    # 额外常用组分（仅扩展 HYSYS 库别名；测试文本仍只用上面 10 个）
+    "氧气": "Oxygen", "oxygen": "Oxygen", "o2": "Oxygen",
+    "氮气": "Nitrogen", "nitrogen": "Nitrogen", "n2": "Nitrogen",
+    "乙烯": "Ethylene", "ethylene": "Ethylene",
+    "乙烷": "Ethane", "ethane": "Ethane",
+    "丙烯": "Propene", "propene": "Propene",
+    "丙烷": "Propane", "propane": "Propane",
+    "正丁烷": "n-Butane", "n-butane": "n-Butane",
+    "异丁烷": "i-Butane", "i-butane": "i-Butane",
+    "正戊烷": "n-Pentane", "n-pentane": "n-Pentane",
+    "异戊烷": "i-Pentane", "i-pentane": "i-Pentane",
+    "硫化氢": "H2S", "h2s": "H2S",
+    "乙醇": "Ethanol", "ethanol": "Ethanol",
+    "氨": "Ammonia", "ammonia": "Ammonia",
 }
 
 # 语义有歧义、不能擅自展开为某个标准 ID 的别名。

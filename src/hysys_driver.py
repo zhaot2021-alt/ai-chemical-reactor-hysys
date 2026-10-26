@@ -1075,13 +1075,13 @@ class HYSYSDriver:
 
         unknown = [
             item for item in requested
-            if item not in config.STANDARD_COMPONENT_IDS
+            if item not in config.KNOWN_COMPONENT_IDS
         ]
         if unknown:
             raise HYSYSDriverError(
                 f"检测到非标准组分 ID：{unknown}；"
                 "允许的标准 ID 见 config.STANDARD_COMPONENT_IDS："
-                f"{list(config.STANDARD_COMPONENT_IDS)}"
+                f"{list(config.KNOWN_COMPONENT_IDS)}"
             )
         return _unique(requested)
 

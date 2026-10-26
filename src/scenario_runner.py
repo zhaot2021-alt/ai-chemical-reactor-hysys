@@ -22,11 +22,18 @@ logger = logging.getLogger("scenario_runner")
 
 TOLUENE_MW_KG_KMOL = 92.1402
 COMPONENT_MW_KG_KMOL = {
-    "Toluene": 92.1402,
-    "Benzene": 78.114,
-    "o-Xylene": 106.167,
-    "m-Xylene": 106.167,
-    "p-Xylene": 106.167,
+    "Hydrogen": 2.016, "Nitrogen": 28.014, "Oxygen": 31.999,
+    "CO": 28.010, "CO2": 44.009, "Methane": 16.043, "H2O": 18.015,
+    "H2S": 34.081, "Ethylene": 28.054, "Ethane": 30.070,
+    "Propene": 42.081, "Propane": 44.097,
+    "i-Butane": 58.124, "n-Butane": 58.124,
+    "i-Butene": 56.108, "1-Butene": 56.108,
+    "13-Butadiene": 54.092, "tr2-Butene": 56.108, "cis2-Butene": 56.108,
+    "i-Pentane": 72.146, "n-Pentane": 72.146, "1-Pentene": 70.132,
+    "Ethanol": 46.069, "MTBE": 88.150, "ETBE": 102.177,
+    "Ammonia": 17.031,
+    "Toluene": 92.1402, "Benzene": 78.114,
+    "o-Xylene": 106.167, "m-Xylene": 106.167, "p-Xylene": 106.167,
 }
 DEFAULT_GIBBS_FLOW_KGMOLEH = 1000.0
 ENERGY_DUTY_BOUNDS_KJ_H = (0.0, 1.0e8)
@@ -39,7 +46,7 @@ def _require_components(plan: dict[str, Any]) -> list[str]:
     components = plan.get("components") or []
     if not components:
         raise ValueError("plan.components 为空")
-    unknown = [item for item in components if item not in config.STANDARD_COMPONENT_IDS]
+    unknown = [item for item in components if item not in config.KNOWN_COMPONENT_IDS]
     if unknown:
         raise ValueError(f"plan 含非标准组分：{unknown}")
     return list(components)

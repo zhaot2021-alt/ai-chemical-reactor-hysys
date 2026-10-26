@@ -22,6 +22,8 @@ import logging
 import os
 import re
 import urllib.request
+
+import config
 from typing import Any
 
 logger = logging.getLogger("llm_planner")
@@ -31,14 +33,15 @@ class LLMPlanError(RuntimeError):
     pass
 
 
-_SYSTEM_PROMPT = """你是 Aspen HYSYS 反应器建模助手。只输出一个 JSON 对象，不要输出任何解释或 Markdown。
+_SYSTEM_PROMPT_TEMPLATE = """你是 Aspen HYSYS 反应器建模助手。只输出一个 JSON 对象，不要输出任何解释或 Markdown。
 按考核规则选择反应器类型：
 1) 有动力学/设备参数：液相 CSTR、气相 PFR；
 2) 无动力学但给出转化率/收率/选择性：Conversion；
 3) 提供平衡常数 Ka 或吉布斯自由能：Equilibrium；
 4) 产物分布未知、复杂高温体系：Gibbs。
-HYSYS 标准组分 ID 只能是：
-Methane,H2O,CO,CO2,Hydrogen,Toluene,Benzene,o-Xylene,m-Xylene,p-Xylene。
+HYSYS 标准组分 ID 只能从以下列表选择：
+{COMPONENT_IDS}
+
 输出 JSON 字段：
 {
  "reactor_type": "gibbs|conversion|equilibrium",
@@ -67,6 +70,10 @@ Methane,H2O,CO,CO2,Hydrogen,Toluene,Benzene,o-Xylene,m-Xylene,p-Xylene。
   若产物异构体比例未指定（如邻/间/对二甲苯），按等摩尔拆分并在 notes 中说明假设；
 - Gibbs 的 reactions 可以为空数组；
 - 不得编造用户未提供的数值；缺失用 null。甲烷蒸汽重整需包含产物组分 CO/CO2/Hydrogen。"""
+
+_SYSTEM_PROMPT = _SYSTEM_PROMPT_TEMPLATE.replace(
+    "{COMPONENT_IDS}", ", ".join(config.KNOWN_COMPONENT_IDS)
+)
 
 
 def _candidate_providers() -> list[dict[str, str]]:
