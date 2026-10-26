@@ -3,138 +3,248 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI 化工反应器建模</title>
+<title>AI 化工反应器建模智能体</title>
 <style>
-  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0;
-         background: #f5f7fa; color: #1f2937; }
-  header { background: #0f766e; color: #fff; padding: 14px 24px;
-           font-size: 18px; font-weight: 600; }
-  main { max-width: 900px; margin: 24px auto; padding: 0 16px; }
-  textarea { width: 100%; height: 90px; padding: 12px; font-size: 14px;
-             border: 1px solid #cbd5e1; border-radius: 8px; resize: vertical;
-             box-sizing: border-box; }
-  button { margin: 10px 10px 0 0; padding: 10px 22px; border: 0; border-radius: 8px;
-           font-size: 14px; cursor: pointer; background: #0f766e; color: #fff; }
-  button.secondary { background: #64748b; }
+  :root { --brand: #0f766e; --brand2: #14b8a6; --bg: #f0f5f4; --card: #ffffff;
+          --text: #1e293b; --muted: #64748b; --line: #dbe5e4; --warn: #b45309;
+          --err: #b91c1c; --ok: #15803d; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { background: linear-gradient(120deg, #0b5e57, #0f766e 55%, #14b8a6);
+           color: #fff; padding: 18px 28px; display: flex; align-items: center;
+           justify-content: space-between; }
+  header h1 { margin: 0; font-size: 19px; }
+  header p { margin: 4px 0 0; font-size: 12.5px; opacity: .85; }
+  .hbadge { background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.35);
+            border-radius: 999px; padding: 4px 14px; font-size: 12.5px; }
+  main { max-width: 940px; margin: 0 auto; padding: 22px 16px 60px; }
+  .stepbar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .step { flex: 1; min-width: 150px; background: var(--card); border: 1px solid var(--line);
+          border-radius: 10px; padding: 10px 14px; font-size: 12.5px; color: var(--muted); }
+  .step b { display: block; font-size: 13px; color: var(--text); }
+  .step.done { border-color: var(--brand2); }
+  .step.done b::after { content: " ✓"; color: var(--ok); }
+  .step.active { border-color: var(--brand2); box-shadow: 0 0 0 3px rgba(20,184,166,.15); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+          padding: 16px 18px; margin-top: 14px; }
+  .chat { display: flex; gap: 10px; align-items: flex-start; }
+  .avatar { width: 34px; height: 34px; border-radius: 50%; flex: 0 0 34px;
+            display: flex; align-items: center; justify-content: center;
+            color: #fff; font-size: 15px; font-weight: 700; }
+  .user .avatar { background: #475569; }
+  .ai .avatar { background: var(--brand2); }
+  textarea { width: 100%; height: 96px; padding: 12px; font-size: 14px;
+             border: 1px solid var(--line); border-radius: 10px; resize: vertical;
+             font-family: inherit; background: #fbfdfd; }
+  textarea:focus { outline: 2px solid var(--brand2); border-color: transparent; }
+  .actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+  button { padding: 10px 22px; border: 0; border-radius: 9px; font-size: 14px;
+           cursor: pointer; background: var(--brand); color: #fff; font-weight: 600; }
+  button:hover { filter: brightness(1.08); }
+  button.secondary { background: #e8f0ef; color: var(--brand); }
   button:disabled { opacity: .5; cursor: wait; }
-  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
-          padding: 16px; margin-top: 16px; }
-  .badge { display: inline-block; background: #0f766e; color: #fff; border-radius: 999px;
-           padding: 2px 12px; font-size: 13px; margin-right: 8px; }
-  .badge.warn { background: #b45309; }
-  .muted { color: #64748b; font-size: 13px; }
-  table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 8px; }
-  th, td { border: 1px solid #e2e8f0; padding: 6px 8px; text-align: right; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #fff;
+             border-top-color: transparent; border-radius: 50%;
+             animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .examples { margin-top: 12px; }
+  .examples span { font-size: 12.5px; color: var(--muted); margin-right: 6px; }
+  .chip { display: inline-block; background: #e8f0ef; color: var(--brand); border-radius: 999px;
+          padding: 5px 13px; font-size: 12.5px; cursor: pointer; margin: 3px 6px 0 0;
+          border: 1px solid transparent; }
+  .chip:hover { border-color: var(--brand2); background: #d7ece9; }
+  .badge { display: inline-block; background: var(--brand); color: #fff; border-radius: 999px;
+           padding: 3px 14px; font-size: 13px; font-weight: 600; margin-right: 10px; }
+  .badge.warn { background: var(--warn); }
+  .kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 8px; margin-top: 10px; }
+  .kv div { background: #f6faf9; border: 1px solid var(--line); border-radius: 8px;
+            padding: 8px 12px; font-size: 12.5px; }
+  .kv b { color: var(--muted); font-weight: 500; }
+  h3 { margin: 14px 0 6px; font-size: 14.5px; }
+  ul { margin: 4px 0; padding-left: 20px; }
+  li { font-size: 13px; margin: 3px 0; line-height: 1.5; }
+  .muted { color: var(--muted); font-size: 12.5px; }
+  .error { color: var(--err); } .okc { color: var(--ok); }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; margin-top: 8px; }
+  th, td { border: 1px solid var(--line); padding: 5px 9px; text-align: right; }
   th:first-child, td:first-child { text-align: left; }
-  th { background: #f1f5f9; }
-  .error { color: #b91c1c; }
-  .ok { color: #15803d; }
-  h3 { margin: 12px 0 6px; font-size: 15px; }
-  li { font-size: 13px; margin: 2px 0; }
+  th { background: #f1f7f6; }
+  .bar { height: 10px; background: #e2e8f0; border-radius: 6px; overflow: hidden;
+         min-width: 90px; display: inline-block; vertical-align: middle; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--brand2), var(--brand)); }
+  .streamcard { border: 1px solid var(--line); border-left: 4px solid var(--brand2);
+                border-radius: 8px; padding: 10px 14px; margin-top: 10px; }
+  .streamhead { display: flex; justify-content: space-between; flex-wrap: wrap;
+                font-size: 13px; margin-bottom: 6px; }
+  .streamhead b { color: var(--brand); }
+  .rxn { background: #f6faf9; border-radius: 8px; padding: 8px 12px;
+         font-size: 13px; margin-top: 6px; font-family: Consolas, monospace; }
 </style>
 </head>
 <body>
-<header>AI 化工反应器建模 — Aspen HYSYS V15 智能体</header>
+<header>
+  <div>
+    <h1>AI 化工反应器建模智能体</h1>
+    <p>自然语言 → 反应器自动选型 → Aspen HYSYS V15 真实建模 → 产物结果</p>
+  </div>
+  <span class="hbadge">Gibbs · Conversion · Equilibrium · PFR · CSTR</span>
+</header>
+
 <main>
-  <textarea id="text" placeholder="用自然语言描述反应过程，例如：&#10;CO2 和 H2 以 1:1 摩尔比进料，500 K、10 bar，流量 100 kmol/h，反应 CO2+H2→CO+H2O，活化能 50000 kJ/kgmole，指前因子 1000 m3/kmol-s，气相，反应器体积 1 m3">CO2 和 H2 以 1:1 摩尔比进料，500 K、10 bar，流量 100 kmol/h，用 PFR 反应 CO2+H2→CO+H2O，活化能 50000 kJ/kgmole，指前因子 1000 m3/kmol-s，反应器体积 1 m3</textarea>
-  <button id="btnPlan">1. 生成建模方案（AI 选型）</button>
-  <button id="btnRun" class="secondary" disabled>2. 在 HYSYS 中执行</button>
+  <div class="stepbar">
+    <div class="step" id="st1"><b>① 需求输入</b>自然语言描述反应过程</div>
+    <div class="step" id="st2"><b>② AI 选型</b>判断反应器类型与参数</div>
+    <div class="step" id="st3"><b>③ HYSYS 建模</b>自动创建/配置/求解</div>
+    <div class="step" id="st4"><b>④ 结果返回</b>产物组成与温度</div>
+  </div>
+
+  <div class="card chat user">
+    <div class="avatar">我</div>
+    <div style="flex:1">
+      <div class="muted" style="margin-bottom:6px">用自然语言描述反应过程（温度/压力/流量/反应式/动力学参数等）</div>
+      <textarea id="text">CO2 和 H2 以 1:1 摩尔比进料，500 K、10 bar，流量 100 kmol/h，用 PFR 反应 CO2+H2→CO+H2O，活化能 50000 kJ/kgmole，指前因子 1000 m3/kmol-s，反应器体积 1 m3</textarea>
+      <div class="actions">
+        <button id="btnPlan">生成建模方案</button>
+        <button id="btnRun" class="secondary" disabled>在 HYSYS 中执行</button>
+        <span class="muted" id="hint">先点左侧按钮生成方案</span>
+      </div>
+      <div class="examples">
+        <span>快速示例：</span>
+        <span class="chip" data-t="sc1">必测1 · 甲烷蒸汽重整（Gibbs）</span>
+        <span class="chip" data-t="sc2">必测2 · 甲苯歧化（Conversion）</span>
+        <span class="chip" data-t="sc3">通用 · RWGS 动力学（PFR）</span>
+      </div>
+    </div>
+  </div>
 
   <div id="planBox" class="card" style="display:none"></div>
   <div id="resultBox" class="card" style="display:none"></div>
 </main>
 
 <script>
-let currentPlan = null;
-const $ = id => document.getElementById(id);
+const EXAMPLES = {
+  sc1: "我需要模拟甲烷蒸汽重整。进料是甲烷和水蒸气（摩尔比 1:2.7）有两个反应，主反应甲烷和水反应生成一氧化碳和氢气；副反应一氧化碳和水蒸汽反应生成二氧化碳和氢气，请分析以下两种情况下反应炉的组分分布：1、重整炉出口气温度为 710°C，压力 13.5 bar，进料温度520℃；2、重整炉出口气温度为600℃，压力13.5bar，进料温度520℃。进料流量 1000 kmol/h",
+  sc2: "请帮我完成甲苯歧化反应的模拟，甲苯原料进入转化率反应器，发生歧化反应：2C7H8 → C6H6 + C8H10。甲苯进料流量10000kg/h，进料温度为380℃，操作压力2.5MPa，甲苯转化率为50%，反应产物为苯和二甲苯（邻、间、对三种异构体），请配置反应并模拟产物分布和流股组成",
+  sc3: "CO2 和 H2 以 1:1 摩尔比进料，500 K、10 bar，流量 100 kmol/h，用 PFR 反应 CO2+H2→CO+H2O，活化能 50000 kJ/kgmole，指前因子 1000 m3/kmol-s，反应器体积 1 m3",
+};
+document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("text").value = EXAMPLES[c.dataset.t]; });
 
-async function post(url, body) {
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+const $ = id => document.getElementById(id);
+let currentPlan = null;
+function esc(s){const d=document.createElement("div");d.textContent=s==null?"":String(s);return d.innerHTML;}
+async function post(url, body){
+  const resp = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(body)});
   return resp.json();
 }
+function setStep(n){ for(let i=1;i<=4;i++){ const s=$("st"+i);
+  s.className = "step" + (i<n?" done":(i===n?" active":"")); } }
 
-function esc(s) { const d = document.createElement("div");
-  d.textContent = s == null ? "" : String(s); return d.innerHTML; }
-
-function planHtml(r) {
+function planHtml(r){
   const p = r.plan;
-  const typeMap = { gibbs: "Gibbs 反应器", conversion: "转化率反应器",
-    equilibrium: "平衡反应器", pfr: "平推流 PFR", cstr: "全混流 CSTR" };
-  let h = `<span class="badge">${esc(typeMap[p.reactor_type] || p.reactor_type)}</span>`;
-  h += `<b>选择理由：</b>${esc(p.reason)}<br>`;
-  h += `<span class="muted">组分：${esc((p.components || []).join(" / "))}<br>`
-     + `进料：${esc(p.feed_temperature_c ?? "?")}℃ · ${esc(p.pressure_bar ?? "?")} bar`
-     + ` · ${esc(p.molar_flow_kmolh ?? p.mass_flow_kg_h ?? "?")}${p.molar_flow_kmolh ? " kmol/h" : " kg/h"}</span>`;
-  const notes = r.notes || [];
-  if (notes.length) h += `<h3>建模假设</h3><ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>`;
-  if (r.missing && r.missing.length) {
-    h += `<h3 class="warn">⚠ 信息不足，需补充</h3><ul>${r.missing.map(m => `<li class="error">${esc(m)}</li>`).join("")}</ul>`;
+  const typeMap = {gibbs:"Gibbs 反应器", conversion:"转化率反应器", equilibrium:"平衡反应器",
+                   pfr:"平推流 PFR", cstr:"全混流 CSTR"};
+  let h = `<div class="chat ai"><div class="avatar">AI</div><div style="flex:1">`;
+  h += `<span class="badge">${esc(typeMap[p.reactor_type] || p.reactor_type)}</span>`;
+  h += `<b>选择理由：</b>${esc(p.reason)}`;
+  h += `<div class="kv">
+    <div><b>组分</b><br>${esc((p.components||[]).join(" · "))}</div>
+    <div><b>进料温度</b><br>${esc(p.feed_temperature_c ?? "?")} ℃</div>
+    <div><b>压力</b><br>${esc(p.pressure_bar ?? "?")} bar</div>
+    <div><b>流量</b><br>${esc(p.molar_flow_kmolh ?? p.mass_flow_kg_h ?? "?")} ${p.molar_flow_kmolh!=null?"kmol/h":"kg/h"}</div>
+  </div>`;
+  for (const rx of (p.reactions||[])){
+    const st = Object.entries(rx.stoichiometry||{}).map(([c,v]) =>
+      (v<0?"":"+") + v + " " + c).join(" ");
+    h += `<div class="rxn">${esc(rx.name)}：${esc(st)}`;
+    if (rx.kinetics) h += `<br>动力学：A=${esc(rx.kinetics.frequency_factor_m3_kgmole_s)} m³/kmol·s · Ea=${esc(rx.kinetics.activation_energy_kj_kgmole)} kJ/kgmole`;
+    if (rx.conversion_percent!=null) h += `<br>转化率：${esc(rx.conversion_percent)}%`;
+    if (rx.equilibrium_constant!=null) h += `<br>Ka=${esc(rx.equilibrium_constant)}`;
+    h += `</div>`;
   }
-  return h;
+  if ((r.notes||[]).length) h += `<h3>建模假设</h3><ul>${r.notes.map(n=>`<li>${esc(n)}</li>`).join("")}</ul>`;
+  if ((r.missing||[]).length){
+    h += `<h3 class="warn">⚠ 信息不足，需补充后重新生成</h3><ul>${r.missing.map(m=>`<li class="error">${esc(m)}</li>`).join("")}</ul>`;
+  } else {
+    h += `<div class="okc" style="margin-top:8px">✓ 方案完整，可执行</div>`;
+  }
+  return h + "</div></div>";
 }
 
-function streamHtml(s) {
-  if (!s || !s.mole_fractions) return "";
-  const frac = Object.entries(s.mole_fractions).filter(([, v]) => v > 0.0005);
-  let h = `<h3>物流 ${esc(s.name)} <span class="muted">`
-    + `T=${s.temperature_k == null ? "?" : (s.temperature_k - 273.15).toFixed(1)}℃ · `
-    + `P=${s.pressure_kpa == null ? "?" : (s.pressure_kpa / 100).toFixed(2)} bar · `
-    + `F=${s.molar_flow_kgmoleh == null ? "?" : s.molar_flow_kgmoleh.toFixed(2)} kmol/h</span></h3>`;
-  h += `<table><tr><th>组分</th><th>摩尔分数</th></tr>`;
-  for (const [c, v] of frac) h += `<tr><td>${esc(c)}</td><td>${(v * 100).toFixed(2)}%</td></tr>`;
+function fracBars(s){
+  const frac = Object.entries(s.mole_fractions||{}).filter(([,v])=>v>0.0005)
+    .sort((a,b)=>b[1]-a[1]);
+  if (!frac.length) return "";
+  let h = `<table><tr><th>组分</th><th>摩尔分数</th><th style="min-width:180px"></th></tr>`;
+  for (const [c,v] of frac)
+    h += `<tr><td>${esc(c)}</td><td>${(v*100).toFixed(2)}%</td>
+      <td><span class="bar"><i style="width:${Math.min(100, v*100*2.2)}%"></i></span></td></tr>`;
   return h + "</table>";
 }
-
-function collectStreams(obj, out) {
-  if (!obj || typeof obj !== "object") return;
-  if (obj.name && obj.mole_fractions) out.push(obj);
-  for (const v of Object.values(obj)) collectStreams(v, out);
+function streamHtml(s){
+  if (!s || !s.mole_fractions) return "";
+  const tc = s.temperature_k==null ? "?" : (s.temperature_k-273.15).toFixed(1);
+  const pb = s.pressure_kpa==null ? "?" : (s.pressure_kpa/100).toFixed(2);
+  const fl = s.molar_flow_kgmoleh==null ? "?" : s.molar_flow_kgmoleh.toFixed(2);
+  return `<div class="streamcard">
+    <div class="streamhead"><b>物流 ${esc(s.name)}</b>
+    <span class="muted">T = ${tc} ℃ ｜ P = ${pb} bar ｜ F = ${fl} kmol/h</span></div>
+    ${fracBars(s)}</div>`;
 }
+function collectStreams(obj, out){ if(!obj||typeof obj!=="object")return;
+  if(obj.name && obj.mole_fractions) out.push(obj);
+  for(const v of Object.values(obj)) collectStreams(v,out); }
 
-function resultHtml(s) {
-  const streams = [];
-  collectStreams(s, streams);
-  let h = `<span class="ok">✓ 执行成功（HYSYS 真实求解）</span>`;
-  if (s.scenario === "gibbs") {
-    for (const [label, item] of Object.entries(s.results || {})) {
-      h += `<h3>工况 ${esc(label)}（能量流 duty ${Number(item.energy_stream_duty_kj_h / 1e6).toFixed(2)} ×10⁶ kJ/h）</h3>`;
+function resultHtml(s){
+  const streams = []; collectStreams(s, streams);
+  let h = `<div class="chat ai"><div class="avatar">AI</div><div style="flex:1">`;
+  h += `<span class="okc" style="font-weight:700">✓ HYSYS 真实求解完成</span>`;
+  if (s.scenario === "gibbs"){
+    for (const [label, item] of Object.entries(s.results||{})){
+      h += `<h3>工况 ${esc(label)}　<span class="muted">能量流 duty ${Number(item.energy_stream_duty_kj_h/1e6).toFixed(2)} ×10⁶ kJ/h</span></h3>`;
       h += streamHtml(item.vapour) + streamHtml(item.liquid);
     }
-  } else if (s.actual_conversion_percent != null) {
-    h += `　实际转化率：<b>${s.actual_conversion_percent.toFixed(2)}%</b>`;
   }
+  if (s.actual_conversion_percent != null)
+    h += `<h3>实际转化率 <span class="okc">${s.actual_conversion_percent.toFixed(2)}%</span></h3>`;
   for (const st of streams) h += streamHtml(st);
-  h += `<div class="muted" style="margin-top:8px">Case 已保存：${esc(s.hsc_path)}</div>`;
-  return h;
+  h += `<div class="muted" style="margin-top:10px">Case 已保存：${esc(s.hsc_path)}</div>`;
+  return h + "</div></div>";
 }
 
 $("btnPlan").onclick = async () => {
-  $("btnPlan").disabled = true;
+  $("btnPlan").disabled = true; $("btnRun").disabled = true;
+  $("hint").textContent = "AI 正在选择反应器类型并生成方案…";
+  setStep(2);
   $("planBox").style.display = "block";
-  $("planBox").innerHTML = `<span class="muted">AI 正在选择反应器类型并生成建模方案…</span>`;
+  $("planBox").innerHTML = `<div class="chat ai"><div class="avatar">AI</div><div class="muted" style="padding:6px"><span class="spinner" style="border-color:#14b8a6;border-top-color:transparent"></span>AI 分析中…</div></div>`;
   $("resultBox").style.display = "none";
   try {
     const r = await post("/api/plan", { text: $("text").value });
-    if (!r.ok) { $("planBox").innerHTML = `<span class="error">✗ ${esc(r.error)}</span>`; return; }
+    if (!r.ok){ $("planBox").innerHTML = `<div class="error">✗ ${esc(r.error)}</div>`; return; }
     currentPlan = r.plan;
     $("planBox").innerHTML = planHtml(r);
-    $("btnRun").disabled = false;
+    setStep(2); $("st2").className = "step done";
+    if (!r.missing.length){ $("btnRun").disabled = false;
+      $("hint").textContent = "方案已就绪，点击执行"; }
+    else $("hint").textContent = "信息不足，请补充后重新生成";
   } finally { $("btnPlan").disabled = false; }
 };
 
 $("btnRun").onclick = async () => {
   if (!currentPlan) return;
-  $("btnRun").disabled = true;
+  $("btnRun").disabled = true; setStep(3);
+  $("hint").textContent = "HYSYS 建模求解中（约 10-60 秒）…";
   $("resultBox").style.display = "block";
-  $("resultBox").innerHTML = `<span class="muted">HYSYS 建模求解中（约 10-60 秒），窗口会弹出 HYSYS 界面…</span>`;
+  $("resultBox").innerHTML = `<div class="chat ai"><div class="avatar">AI</div><div class="muted" style="padding:6px"><span class="spinner" style="border-color:#14b8a6;border-top-color:transparent"></span>正在连接 Aspen HYSYS V15，自动创建反应器并求解…</div></div>`;
   try {
     const r = await post("/api/run", { plan: currentPlan });
-    if (!r.ok) { $("resultBox").innerHTML = `<span class="error">✗ ${esc(r.error)}</span>`; return; }
+    if (!r.ok){ $("resultBox").innerHTML = `<div class="error">✗ ${esc(r.error)}</div>`; return; }
     $("resultBox").innerHTML = resultHtml(r.summary);
+    setStep(4); $("st4").className = "step done";
+    $("hint").textContent = "完成，可继续输入新需求";
   } finally { $("btnRun").disabled = false; }
 };
 </script>

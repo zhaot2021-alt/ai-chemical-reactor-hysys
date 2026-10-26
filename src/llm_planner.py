@@ -87,8 +87,8 @@ HYSYS 标准组分 ID 只能从以下列表选择：
 - Conversion 必须根据已配平的化学方程式给出 reactions，反应物系数为负、产物为正；
   若产物异构体比例未指定（如邻/间/对二甲苯），按等摩尔拆分并在 notes 中说明假设；
 - pfr/cstr 必须给出 reactions[].kinetics（活化能 kJ/kgmole、频率因子 m3/kgmole-s、
-  正向级数；reaction_phase 0=Overall/1=液相/2=气相，默认 0）和 reactor_spec 设备尺寸
-  （PFR：体积或管长+管径；CSTR：体积）；
+  正向级数；reaction_phase 固定填 0=Overall，HYSYS V15 实测仅该值可用）和
+  reactor_spec 设备尺寸（PFR：体积或管长+管径；CSTR：体积）；
 - Gibbs 的 reactions 可以为空数组；
 - 不得编造用户未提供的数值；缺失用 null。甲烷蒸汽重整需包含产物组分 CO/CO2/Hydrogen。"""
 

@@ -432,6 +432,13 @@ def run_kinetic(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
     for index, reaction in enumerate(reactions, start=1):
         reaction_name = str(reaction.get("name") or f"KinRxn-{index}")
         kinetics = reaction.get("kinetics") or {}
+        phase = int(kinetics.get("reaction_phase", 0))
+        if phase != 0:
+            logger.warning(
+                "reaction_phase=%d 未经验证，回退为 0（Overall，远程实测唯一可用值）",
+                phase,
+            )
+            phase = 0
         driver.add_kinetic_reaction(
             set_name,
             reaction_name,
@@ -446,7 +453,7 @@ def run_kinetic(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
             reverse_frequency_factor=float(
                 kinetics.get("reverse_frequency_factor_m3_kgmole_s", 0.0)
             ),
-            reaction_phase=int(kinetics.get("reaction_phase", 0)),
+            reaction_phase=phase,
         )
 
     if reactor_kind == "pfr":
