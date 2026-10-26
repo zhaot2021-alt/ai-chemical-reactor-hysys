@@ -1028,6 +1028,49 @@ class HYSYSDriver:
 
         return values
 
+    def set_stream_conditions(
+        self,
+        name: str,
+        *,
+        temperature_k: float | None = None,
+        pressure_kpa: float | None = None,
+        molar_flow_kgmoleh: float | None = None,
+    ) -> dict[str, Any]:
+        """设置已有物流的 T/P/F（内部单位）；不自动求解。"""
+        stream = self._get_stream(name)
+        updates: list[tuple[str, float, str, str]] = []
+        if temperature_k is not None:
+            updates.append(
+                ("Temperature", _positive_float(temperature_k, "temperature_k"),
+                 config.HYSYS_TEMPERATURE_UNIT, "temperature")
+            )
+        if pressure_kpa is not None:
+            updates.append(
+                ("Pressure", _positive_float(pressure_kpa, "pressure_kpa"),
+                 config.HYSYS_PRESSURE_UNIT, "pressure")
+            )
+        if molar_flow_kgmoleh is not None:
+            updates.append(
+                ("MolarFlow", _positive_float(molar_flow_kgmoleh, "molar_flow_kgmoleh"),
+                 config.HYSYS_MOLAR_FLOW_UNIT, "molar flow")
+            )
+        if not updates:
+            raise ValueError("至少提供一个温度/压力/摩尔流量")
+
+        for attribute, value, unit, label in updates:
+            try:
+                getattr(stream, attribute).SetValue(value, unit)
+            except Exception as exc:  # noqa: BLE001
+                raise HYSYSDriverError(
+                    f"设置物流 {name!r} {label} 失败：{_com_error_detail(exc)}"
+                ) from exc
+        self.logger.info(
+            "已设置物流 %s：%s",
+            name,
+            {label: value for _, value, _, label in updates},
+        )
+        return self.read_stream_values(name)
+
     def set_stream_composition(
         self,
         name: str,
