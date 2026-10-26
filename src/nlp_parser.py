@@ -31,6 +31,7 @@ class ParsedRequest(TypedDict):
 
     raw_text: str
     components: list[str]                 # HYSYS 标准组分 ID
+    composition: dict[str, float] | None  # 进料摩尔分数；阶段2A规则占位
     temperature_c: float | None           # 外部单位 ℃
     pressure_bar: float | None            # 外部单位 bar（MPa/kPa/atm 已换算）
     molar_flow_kmolh: float | None        # 外部单位 kmol/h
@@ -128,6 +129,41 @@ def _extract_components(text: str) -> tuple[list[str], list[str]]:
             )
 
     return components, notes
+
+
+def _extract_composition(
+    text: str, components: list[str]
+) -> tuple[dict[str, float] | None, list[str]]:
+    """
+    阶段2A的组成规则占位：
+      - 单一组分 → 纯组分 1.0
+      - 文本含“等摩尔/等分数/各组分等量/等比例” → 检测到的组分均分
+      - 其他情况 → None，写入 missing_info，交给后续 LLM
+    明确的百分比/摩尔比解析留到 LLM 阶段，避免规则误判。
+    """
+    notes: list[str] = []
+    if not components:
+        return None, notes
+
+    if len(components) == 1:
+        notes.append(
+            "检测到单一组分，按纯组分摩尔分数 1.0 处理（规则占位，阶段2由 LLM 复核）"
+        )
+        return {components[0]: 1.0}, notes
+
+    equal_markers = ("等摩尔", "等物质的量", "等分数", "各组分等量", "等比例")
+    if any(marker in text for marker in equal_markers):
+        fraction = 1.0 / len(components)
+        notes.append(
+            f"检测到等摩尔描述，按 {len(components)} 个组分等摩尔分配"
+            "（规则占位，阶段2由 LLM 复核明确比例）"
+        )
+        return {component_id: fraction for component_id in components}, notes
+
+    notes.append(
+        "未识别到进料组成；需要摩尔分数或摩尔比，当前 composition 缺失"
+    )
+    return None, notes
 
 
 def _extract_temperature(text: str) -> tuple[float | None, list[str]]:
@@ -249,6 +285,7 @@ def parse(text: str) -> ParsedRequest:
 
     raw_text = text.strip()
     components, component_notes = _extract_components(raw_text)
+    composition, composition_notes = _extract_composition(raw_text, components)
     temperature_c, temperature_notes = _extract_temperature(raw_text)
     pressure_bar, pressure_notes = _extract_pressure(raw_text)
     molar_flow_kmolh, flow_notes = _extract_molar_flow(raw_text)
@@ -257,6 +294,8 @@ def parse(text: str) -> ParsedRequest:
     missing_info: list[str] = []
     if not components:
         missing_info.append("components")
+    if composition is None:
+        missing_info.append("composition")
     if temperature_c is None:
         missing_info.append("temperature_c")
     if pressure_bar is None:
@@ -264,13 +303,20 @@ def parse(text: str) -> ParsedRequest:
     if molar_flow_kmolh is None:
         missing_info.append("molar_flow_kmolh")
 
-    notes = component_notes + temperature_notes + pressure_notes + flow_notes
+    notes = (
+        component_notes
+        + composition_notes
+        + temperature_notes
+        + pressure_notes
+        + flow_notes
+    )
     if reactor_type_hint:
         notes.append("reactor_type_hint 仅为规则占位提示，阶段1不会创建反应器")
 
     return ParsedRequest(
         raw_text=raw_text,
         components=components,
+        composition=composition,
         temperature_c=temperature_c,
         pressure_bar=pressure_bar,
         molar_flow_kmolh=molar_flow_kmolh,
@@ -278,7 +324,7 @@ def parse(text: str) -> ParsedRequest:
         reactor_reason=reactor_reason,
         missing_info=missing_info,
         notes=notes,
-        parser="rule_placeholder_v1",
+        parser="rule_placeholder_v2",
     )
 
 

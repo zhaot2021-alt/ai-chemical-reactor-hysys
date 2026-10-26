@@ -42,6 +42,7 @@ class Stage1Error(RuntimeError):
 logger = logging.getLogger("main")
 
 _FEED_LABELS = {
+    "composition": "进料摩尔组成",
     "temperature_c": "进料温度(℃)",
     "pressure_bar": "进料压力(bar)",
     "molar_flow_kmolh": "摩尔流量(kmol/h)",
@@ -152,9 +153,11 @@ def _resolve_feed(
             )
         feed[field] = float(value)
 
-    for field, label in _FEED_LABELS.items():
+    for field in config.DEFAULT_FEED_CONDITIONS:
         if not math.isfinite(feed[field]):
-            raise Stage1Error(f"{label} 必须是有限数值，收到 {feed[field]!r}")
+            raise Stage1Error(
+                f"{_FEED_LABELS[field]} 必须是有限数值，收到 {feed[field]!r}"
+            )
 
     if config.c_to_k(feed["temperature_c"]) <= 0:
         raise Stage1Error(
@@ -194,7 +197,7 @@ def _to_internal_units(feed: dict[str, float]) -> dict[str, float]:
     }
 
 
-# ==================== 阶段1主流程 ====================
+# ==================== 阶段1 / 2A 主流程 ====================
 def run_stage1(
     text: str,
     *,
@@ -205,7 +208,9 @@ def run_stage1(
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """
-    阶段1完整链路：解析 → 校验/补默认值 → 单位换算 → HYSYS 建模 → 保存。
+    阶段1/2A 完整链路：
+      解析 → 校验 → 单位换算 → HYSYS 建模
+      →（有 composition 时）设置组成、求解、读回 → 保存。
 
     dry_run=True 时只走到“驱动调用计划”，不导入 hysys_driver、不连接 HYSYS，
     可在无 HYSYS 的本地机器执行。
@@ -220,7 +225,7 @@ def run_stage1(
         logger.info("解析提示：%s", note)
     if parsed["reactor_type_hint"]:
         logger.info(
-            "反应器类型提示（阶段1不创建反应器）：%s；理由：%s",
+            "反应器类型提示（当前阶段不创建反应器）：%s；理由：%s",
             parsed["reactor_type_hint"],
             parsed["reactor_reason"],
         )
@@ -243,11 +248,14 @@ def run_stage1(
     else:
         final_save_path = _normalize_save_path(save_path)
 
+    has_composition = parsed["composition"] is not None
+    planned_stage = "stage2a" if has_composition else "stage1"
+
     # ---------- 本地可调试：dry-run 到此处返回 ----------
     if dry_run:
         summary: dict[str, Any] = {
             "mode": "dry-run",
-            "stage": "stage1",
+            "stage": planned_stage,
             "parsed": parsed,
             "feed_external": feed,
             "feed_internal": internal,
@@ -258,6 +266,8 @@ def run_stage1(
                 "property_package": config.PROPERTY_PACKAGE_NAME,
                 "property_package_display": config.PROPERTY_PACKAGE_DISPLAY_NAME,
                 "components": parsed["components"],
+                "composition": parsed["composition"],
+                "solve": has_composition,
                 "feed_stream": {
                     "name": config.FEED_STREAM_NAME,
                     **internal,
@@ -294,14 +304,42 @@ def run_stage1(
             pressure_kpa=internal["pressure_kpa"],
             molar_flow_kgmoleh=internal["molar_flow_kgmoleh"],
         )
-        # 阶段2 扩展位：在这里依据 reactor_spec 分发表调用
+
+        composition_state: dict[str, Any] | None = None
+        composition_set = False
+        if parsed["composition"]:
+            logger.info(
+                "设置 FEED 摩尔组成并求解：%s", parsed["composition"]
+            )
+            composition_state = driver.set_stream_composition(
+                config.FEED_STREAM_NAME, parsed["composition"]
+            )
+            driver.solve_case()
+            stream_state = driver.read_stream_results(config.FEED_STREAM_NAME)
+            composition_set = True
+            logger.info("FEED 求解结果：%s", stream_state)
+        else:
+            logger.warning(
+                "未识别到进料组成，跳过组成设置与求解（阶段1连通模式）"
+            )
+            # 保留 create_material_stream 的 T/P/F 安全字典，避免读取未求解汽化率
+
+        solved = bool(stream_state.get("solved"))
+        if composition_set and not solved:
+            raise Stage1Error(
+                "FEED 组成已设置，但未能读回汽化率/求解结果；"
+                "请检查物流是否收敛或尝试更合适的进料条件"
+            )
+        actual_stage = "stage2a" if composition_set else "stage1"
+
+        # 阶段2B 扩展位：在这里依据 reactor_spec 分发表调用
         # driver.create_conversion_reactor / create_equilibrium_reactor / create_gibbs_reactor。
-        # 阶段1 明确不创建反应器，上面的 reactor_type_hint 只做展示。
+        # 当前阶段2A 只完成进料组成与求解，不创建反应器。
         saved_path = driver.save_case(final_save_path)
 
         live_summary = {
             "mode": "live",
-            "stage": "stage1",
+            "stage": actual_stage,
             "case_name": actual_case_name,
             "fluid_package_name": fluid_package_name,
             "property_package_name": (
@@ -309,7 +347,11 @@ def run_stage1(
                 or config.PROPERTY_PACKAGE_DISPLAY_NAME
             ),
             "components_added": list(added_components),
+            "composition_requested": parsed["composition"],
+            "composition_set": composition_set,
+            "composition_state": composition_state,
             "feed_stream": stream_state,
+            "solved": solved,
             "hsc_path": saved_path,
             "feed_external": feed,
             "feed_internal": internal,
@@ -317,12 +359,24 @@ def run_stage1(
             "missing_info": parsed["missing_info"],
             "notes": parsed["notes"],
             "reactor_type_hint": parsed["reactor_type_hint"],
-            "limitations": [
-                "阶段1仅验证连通性：未设置物流组成、未求解",
-                "未创建任何反应器（Conversion / Equilibrium / Gibbs 留给阶段2）",
-            ],
+            "limitations": (
+                [
+                    "阶段2A：已设置进料组成并求解；尚未创建反应器",
+                    "反应器与产物分布留给阶段2B",
+                ]
+                if composition_set
+                else [
+                    "阶段1仅验证连通性：未设置物流组成、未求解",
+                    "未创建任何反应器（Conversion / Equilibrium / Gibbs 留给阶段2）",
+                ]
+            ),
         }
-        logger.info("阶段1执行完成：Case=%s，文件=%s", actual_case_name, saved_path)
+        logger.info(
+            "阶段 %s 执行完成：Case=%s，文件=%s",
+            actual_stage,
+            actual_case_name,
+            saved_path,
+        )
     finally:
         # 无论成功、异常，都显式释放 COM，避免 hysys.exe 残留
         driver.shutdown()
@@ -335,7 +389,7 @@ def run_stage1(
 # ==================== CLI ====================
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="AI 化工反应器建模 — 阶段1：HYSYS 连通性与基础建模",
+        description="AI 化工反应器建模 — 阶段1/2A：HYSYS 连通、进料组成与求解",
     )
     parser.add_argument(
         "--text",

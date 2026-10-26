@@ -85,8 +85,18 @@ def _verify_fixed_parse(parsed: nlp_parser.ParsedRequest) -> None:
             f"实际 {parsed['molar_flow_kmolh']}"
         )
 
-    if parsed["missing_info"]:
-        problems.append(f"固定测试文本不应有缺失字段，实际：{parsed['missing_info']}")
+    if parsed["composition"] is not None:
+        problems.append(
+            "阶段1固定文本不应推断出组成；请检查解析规则"
+        )
+
+    unexpected_missing = [
+        field for field in parsed["missing_info"] if field != "composition"
+    ]
+    if unexpected_missing:
+        problems.append(
+            f"阶段1固定文本存在意外缺失字段：{unexpected_missing}"
+        )
 
     if problems:
         raise app_main.Stage1Error(
@@ -94,7 +104,8 @@ def _verify_fixed_parse(parsed: nlp_parser.ParsedRequest) -> None:
         )
 
     logger.info(
-        "固定测试文本解析校验通过：10 个标准组分；%.2f℃；%.2f bar；%.2f kmol/h",
+        "固定测试文本解析校验通过：10 个标准组分；%.2f℃；%.2f bar；%.2f kmol/h；"
+        "组成缺失（阶段1预期，main 会跳过组成/求解）",
         parsed["temperature_c"],
         parsed["pressure_bar"],
         parsed["molar_flow_kmolh"],
@@ -121,11 +132,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=".hsc 保存路径（默认 output/<CaseName>.hsc）",
-    )
-    parser.add_argument(
-        "--strict",
-        action="store_true",
-        help="参数缺失时直接报错（固定测试文本应完整通过）",
     )
     parser.add_argument(
         "--log-level",
@@ -163,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
             TEST_TEXT,
             save_path=args.save,
             visible=args.visible,
-            strict=args.strict,
+            strict=False,  # 阶段1固定文本不含组成，非 strict 下跳过求解
             dry_run=args.dry_run,
         )
     except app_main.Stage1Error as exc:

@@ -33,7 +33,7 @@ import logging
 import math
 import subprocess
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -758,6 +758,260 @@ class HYSYSDriver:
                 )
 
         return values
+
+    def set_stream_composition(
+        self,
+        name: str,
+        mole_fractions: Mapping[str, float],
+    ) -> dict[str, Any]:
+        """
+        设置物流摩尔组成（HYSYS V15 实测：ComponentMolarFractionValue 可直接 PUT）。
+
+        参数：
+          name           物流名（通常是 FEED）
+          mole_fractions {HYSYS 标准组分 ID: 摩尔分数}；可只给部分组分，
+                         未给出的组分按 0 处理；总和会归一化。
+
+        返回：
+          {"name", "requested_mole_fractions", "mole_fractions", "normalized"}
+
+        说明：
+          - 组分数组顺序按 HYSYS 流体包实际 Components 顺序构造
+          - 写入后立即读回校验；明显不一致会抛 HYSYSDriverError
+          - 本方法不调用 solve；由 main 明确调用 solve_case()
+        """
+        self._require_fluid_pkg()
+        stream = self._streams.get(name)
+        if stream is None:
+            raise HYSYSDriverError(
+                f"物流 {name!r} 不存在；现有物流：{list(self._streams)}"
+            )
+        if not isinstance(mole_fractions, Mapping) or not mole_fractions:
+            raise ValueError("mole_fractions 必须是非空的 {组分ID: 摩尔分数} 映射")
+
+        component_names = self._fluid_package_component_names()
+        if not component_names:
+            raise HYSYSDriverError("无法确定流体包组分顺序，不能设置组成")
+
+        unknown = [
+            component_id for component_id in mole_fractions
+            if component_id not in component_names
+        ]
+        if unknown:
+            raise HYSYSDriverError(
+                f"组成中包含流体包不存在的组分：{unknown}；"
+                f"当前流体包组分：{component_names}"
+            )
+
+        raw: dict[str, float] = {}
+        for component_id in component_names:
+            value = mole_fractions.get(component_id, 0.0)
+            try:
+                number = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"组分 {component_id!r} 的摩尔分数必须是数值，收到 {value!r}"
+                ) from exc
+            if not math.isfinite(number) or number < 0:
+                raise ValueError(
+                    f"组分 {component_id!r} 的摩尔分数必须是非负有限数，收到 {value!r}"
+                )
+            raw[component_id] = number
+
+        total = sum(raw.values())
+        if total <= 0:
+            raise ValueError("摩尔分数总和必须大于 0")
+
+        normalized = abs(total - 1.0) <= config.COMPOSITION_TOLERANCE
+        if not normalized:
+            self.logger.warning(
+                "物流 %s 的组成总和为 %.8f，将归一化到 1.0", name, total
+            )
+        target = {
+            component_id: raw[component_id] / total
+            for component_id in component_names
+        }
+        array = tuple(target[component_id] for component_id in component_names)
+
+        self.logger.info(
+            "设置物流 %s 组成：%s",
+            name,
+            {key: round(value, 8) for key, value in target.items()},
+        )
+
+        try:
+            # V15 实测：直接 PUT 成功；若失败，回退到 ComponentMolarFraction.Calculate
+            stream.ComponentMolarFractionValue = array
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning(
+                "ComponentMolarFractionValue 直接赋值失败，尝试 Calculate：%s",
+                _com_error_detail(exc),
+            )
+            try:
+                stream.ComponentMolarFraction.Calculate(array)
+            except Exception as calc_exc:  # noqa: BLE001
+                raise HYSYSDriverError(
+                    f"设置物流 {name!r} 组成失败："
+                    f"直接赋值={_com_error_detail(exc)}；"
+                    f"Calculate={_com_error_detail(calc_exc)}"
+                ) from calc_exc
+
+        readback = self._read_stream_composition(stream, name)
+        if readback is None:
+            raise HYSYSDriverError(
+                f"物流 {name!r} 组成写入后读回为空（-32767 或读取失败）"
+            )
+
+        mismatches = []
+        for component_id in component_names:
+            actual = readback.get(component_id, 0.0)
+            if abs(actual - target[component_id]) > 1e-4:
+                mismatches.append(
+                    (component_id, target[component_id], actual)
+                )
+        if mismatches:
+            raise HYSYSDriverError(
+                f"物流 {name!r} 组成读回与目标不一致：{mismatches}"
+            )
+
+        self.logger.info(
+            "物流 %s 组成设置成功（读回和=%.8f）",
+            name,
+            sum(readback.values()),
+        )
+        return {
+            "name": name,
+            "requested_mole_fractions": target,
+            "mole_fractions": readback,
+            "input_sum": total,
+            "normalization_applied": not normalized,
+        }
+
+    def solve_case(self) -> None:
+        """将 Solver.CanSolve 置 True，并等待 IsSolving 结束。"""
+        self._require_case()
+        try:
+            # V15 实测：CanSolve 的 GET/PUT 都存在，且可写
+            self._case.Solver.CanSolve = True
+            self.logger.info("Solver.CanSolve = True")
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning(
+                "设置 Solver.CanSolve=True 失败，继续等待：%s",
+                _com_error_detail(exc),
+            )
+        self._wait_for_solver()
+
+    def read_stream_results(self, name: str) -> dict[str, Any]:
+        """
+        读取物流的求解结果：T/P/F、摩尔组成、汽化率、是否已求解。
+        返回纯 Python 值，不暴露 COM 对象。
+        """
+        stream = self._streams.get(name)
+        if stream is None:
+            raise HYSYSDriverError(
+                f"物流 {name!r} 不存在；现有物流：{list(self._streams)}"
+            )
+
+        values = self.read_stream_values(name)
+        composition = self._read_stream_composition(stream, name)
+        vapour_fraction = None
+        try:
+            candidate = float(stream.VapourFractionValue)
+            if candidate > -30000:
+                vapour_fraction = candidate
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning(
+                "读取物流 %s 的 VapourFractionValue 失败：%s",
+                name,
+                _com_error_detail(exc),
+            )
+
+        values["mole_fractions"] = composition
+        values["vapour_fraction"] = vapour_fraction
+        values["solved"] = composition is not None and vapour_fraction is not None
+        return values
+
+    def _fluid_package_component_names(self) -> list[str]:
+        """读取流体包实际组分顺序（HYSYS 组成数组的顺序）。"""
+        self._require_fluid_pkg()
+        try:
+            count = int(self._fluid_pkg.Components.Count)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning(
+                "读取流体包组分数量失败，退回 driver 记录顺序：%s",
+                _com_error_detail(exc),
+            )
+            return list(self._component_ids)
+
+        # HYSYS 集合通常是 0-based；兼容 1-based。
+        for start in (0, 1):
+            names: list[str] = []
+            for index in range(start, start + count):
+                try:
+                    names.append(str(self._fluid_pkg.Components.Item(index).Name))
+                except Exception:
+                    names = []
+                    break
+            if names:
+                return names
+
+        self.logger.warning("无法读取流体包组分顺序，退回 driver 记录顺序")
+        return list(self._component_ids)
+
+    def _read_stream_composition(
+        self, stream: Any, name: str
+    ) -> dict[str, float] | None:
+        """读取物流组分摩尔分数；未设置时 HYSYS 返回 -32767。"""
+        try:
+            raw = stream.ComponentMolarFractionValue
+            values = [float(value) for value in raw] if raw is not None else []
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning(
+                "读取物流 %s 的 ComponentMolarFractionValue 失败：%s",
+                name,
+                _com_error_detail(exc),
+            )
+            return None
+
+        if not values or all(value <= -30000 for value in values):
+            return None
+
+        component_names = self._fluid_package_component_names()
+        if len(values) != len(component_names):
+            self.logger.warning(
+                "物流 %s 组成数组长度 %d 与组分数量 %d 不一致",
+                name,
+                len(values),
+                len(component_names),
+            )
+        count = min(len(values), len(component_names))
+        return {
+            component_names[index]: values[index]
+            for index in range(count)
+        }
+
+    def _wait_for_solver(self) -> None:
+        solver = self._case.Solver
+        deadline = time.time() + config.HYSYS_SOLVE_TIMEOUT_S
+        while True:
+            try:
+                is_solving = bool(solver.IsSolving)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning(
+                    "读取 Solver.IsSolving 失败，等待 0.5s 后继续：%s",
+                    _com_error_detail(exc),
+                )
+                time.sleep(0.5)
+                return
+
+            if not is_solving:
+                self.logger.info("求解器空闲（IsSolving=False）")
+                return
+            if time.time() >= deadline:
+                raise HYSYSDriverError(
+                    f"等待 HYSYS 求解超时（>{config.HYSYS_SOLVE_TIMEOUT_S:.0f}s）"
+                )
+            time.sleep(config.HYSYS_SOLVE_POLL_S)
 
     def save_case(self, path: str | Path | None = None) -> str:
         """保存 .hsc，返回绝对路径。默认保存到 config.OUTPUT_DIR。"""
