@@ -29,7 +29,6 @@ import win32com.client
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "tools"))
-import config  # noqa: E402
 import probe_hysys_kinetic_api as base  # noqa: E402
 import probe_kinetic_diag as diag  # noqa: E402
 
