@@ -51,9 +51,21 @@ Methane,H2O,CO,CO2,Hydrogen,Toluene,Benzene,o-Xylene,m-Xylene,p-Xylene。
  "mass_flow_kg_h": 数字或null,
  "outlet_temperatures_c": [数字, ...],
  "conversion_percent": 数字或null,
+ "reactions": [
+   {
+     "name": "Rxn-1",
+     "stoichiometry": {"组分ID": 系数},
+     "base_component": "组分ID",
+     "conversion_percent": 数字
+   }
+ ],
  "notes": ["..."]
 }
-不得编造用户未提供的数值；缺失用 null。甲烷蒸汽重整需包含产物组分 CO/CO2/Hydrogen。"""
+规则：
+- Conversion 必须根据已配平的化学方程式给出 reactions，反应物系数为负、产物为正；
+  若产物异构体比例未指定（如邻/间/对二甲苯），按等摩尔拆分并在 notes 中说明假设；
+- Gibbs 的 reactions 可以为空数组；
+- 不得编造用户未提供的数值；缺失用 null。甲烷蒸汽重整需包含产物组分 CO/CO2/Hydrogen。"""
 
 
 def _candidate_providers() -> list[dict[str, str]]:
@@ -158,6 +170,27 @@ def _normalize_plan(plan: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(targets, list):
         raise LLMPlanError("plan.outlet_temperatures_c 必须是数组")
     plan["outlet_temperatures_c"] = [float(value) for value in targets]
+
+    reactions = plan.get("reactions") or []
+    if not isinstance(reactions, list):
+        raise LLMPlanError("plan.reactions 必须是数组")
+    normalized_reactions = []
+    for reaction in reactions:
+        if not isinstance(reaction, dict):
+            raise LLMPlanError("plan.reactions 的元素必须是对象")
+        stoich = reaction.get("stoichiometry") or {}
+        if not isinstance(stoich, dict) or not stoich:
+            raise LLMPlanError("reaction.stoichiometry 为空")
+        normalized_reactions.append({
+            "name": str(reaction.get("name") or "Rxn-1"),
+            "stoichiometry": {
+                str(key): float(value) for key, value in stoich.items()
+            },
+            "base_component": str(reaction.get("base_component") or ""),
+            "conversion_percent": float(reaction.get("conversion_percent"))
+            if reaction.get("conversion_percent") is not None else None,
+        })
+    plan["reactions"] = normalized_reactions
     return plan
 
 

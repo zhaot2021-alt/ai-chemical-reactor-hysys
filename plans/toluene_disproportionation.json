@@ -2,7 +2,7 @@
   "source_text": "请帮我完成甲苯歧化反应的模拟，甲苯原料进入转化率反应器，发生歧化反应：2C7H8 → C6H6 + C8H10。甲苯进料流量10000kg/h，进料温度为380℃，操作压力2.5MPa，甲苯转化率为50%，反应产物为苯和二甲苯（邻、间、对三种异构体），请配置反应并模拟产物分布和流股组成",
   "plan": {
     "reactor_type": "conversion",
-    "reason": "用户明确给出甲苯转化率50%，且指定产物为苯和二甲苯（邻、间、对），属于无动力学但给出转化率的情况，应选用Conversion反应器。",
+    "reason": "用户明确给出甲苯转化率50%及已配平的歧化反应方程式，无动力学或平衡常数数据，故选用转化率反应器。",
     "components": [
       "Toluene",
       "Benzene",
@@ -18,17 +18,30 @@
       "p-Xylene": 0.0
     },
     "feed_temperature_c": 380,
-    "pressure_bar": 25,
+    "pressure_bar": 25.0,
     "molar_flow_kmolh": null,
     "mass_flow_kg_h": 10000,
     "outlet_temperatures_c": [],
     "conversion_percent": 50,
+    "reactions": [
+      {
+        "name": "Rxn-1",
+        "stoichiometry": {
+          "Toluene": -2.0,
+          "Benzene": 1.0,
+          "o-Xylene": 0.333333,
+          "m-Xylene": 0.333333,
+          "p-Xylene": 0.333333
+        },
+        "base_component": "Toluene",
+        "conversion_percent": 50.0
+      }
+    ],
     "notes": [
-      "反应方程式：2C7H8 → C6H6 + C8H10，甲苯转化率50%。",
-      "产物二甲苯包含邻、间、对三种异构体，用户未指定三者比例，需在HYSYS中设定产物分布或按等摩尔分配。",
-      "进料摩尔流量可由质量流量10000 kg/h和甲苯摩尔质量92.14 kg/kmol计算得到，但用户未直接提供，故填null。",
-      "压力2.5 MPa换算为25 bar。",
-      "出口温度未提供，需通过模拟计算得到。"
+      "甲苯歧化总反应：2C7H8 → C6H6 + C8H10，已配平。",
+      "产物二甲苯的邻、间、对三种异构体比例未指定，按等摩尔拆分假设，各占二甲苯总量的1/3。",
+      "进料摩尔流量未提供，由质量流量10000 kg/h和甲苯摩尔质量92.14 kg/kmol计算得约108.53 kmol/h，但按规则不编造数值，故molar_flow_kmolh填null。",
+      "出口温度未提供，outlet_temperatures_c为空数组。"
     ]
   }
 }

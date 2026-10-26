@@ -152,6 +152,7 @@ class HYSYSDriver:
         self._fluid_pkg: Any = None
         self._streams: dict[str, Any] = {}
         self._energy_streams: dict[str, Any] = {}
+        self._reaction_sets: dict[str, Any] = {}
 
         self._case_name: str | None = None
         self._fluid_pkg_name: str | None = None
@@ -294,6 +295,7 @@ class HYSYSDriver:
         # 1) 先释放子对象 COM 引用，再关闭 Case
         self._streams.clear()
         self._energy_streams.clear()
+        self._reaction_sets.clear()
         self._fluid_pkg = None
         gc.collect()
 
@@ -445,6 +447,7 @@ class HYSYSDriver:
         self._fluid_pkg = fluid_pkg
         self._streams.clear()
         self._energy_streams.clear()
+        self._reaction_sets.clear()
         self._property_package_name = self._read_property_package_display(fluid_pkg)
         self._fluid_pkg_name = self._read_com_name(
             fluid_pkg, config.FLUID_PACKAGE_NAME
@@ -623,6 +626,138 @@ class HYSYSDriver:
             ) from exc
         self.logger.info("能量流 %s HeatFlow = %.6g kJ/h", name, value)
         return name
+
+    def create_reaction_set(self, name: str) -> str:
+        """创建 Conversion 反应集（V15 实测 ReactionSets.Add(name, 'Conversion')）。"""
+        self._require_case()
+        set_name = str(name).strip()
+        if not set_name:
+            raise ValueError("反应集名称不能为空")
+        if set_name in self._reaction_sets:
+            raise HYSYSDriverError(f"反应集 {set_name!r} 已存在")
+        try:
+            rset = self._case.BasisManager.ReactionPackageManager.ReactionSets.Add(
+                set_name, "Conversion"
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"创建反应集 {set_name!r} 失败：{_com_error_detail(exc)}"
+            ) from exc
+        self._reaction_sets[set_name] = rset
+        self.logger.info("已创建反应集：%s", set_name)
+        return set_name
+
+    def associate_reaction_set(self, set_name: str) -> None:
+        """将反应集关联到当前流体包（AssociateFluidPackage + ReactionSets.Add）。"""
+        self._require_fluid_pkg()
+        rset = self._get_reaction_set(set_name)
+        try:
+            rset.AssociateFluidPackage(self._fluid_pkg)
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"反应集 {set_name!r} AssociateFluidPackage 失败："
+                f"{_com_error_detail(exc)}"
+            ) from exc
+        try:
+            self._fluid_pkg.ReactionPackage.ReactionSets.Add(rset)
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"反应集 {set_name!r} 添加到流体包失败："
+                f"{_com_error_detail(exc)}"
+            ) from exc
+        self.logger.info("反应集 %s 已关联到流体包", set_name)
+
+    def add_conversion_reaction(
+        self,
+        set_name: str,
+        reaction_name: str,
+        stoichiometry: Mapping[str, float],
+        base_component: str,
+        conversion_percent: float,
+        *,
+        reaction_phase: int = 5,
+    ) -> str:
+        """
+        创建 conversionrxn 并加入反应集（全部使用 V15 实测接口）：
+          Reactions.Add(name,"conversionrxn")
+          Reactants.Add(组分) × 全部流体包组分
+          ReactantStoichCoefValue = tuple（按流体包组分顺序）
+          BaseComponent = 组分对象；ConversionCoefficientsValue=(C0,0,0)
+          ReactionPhase=5（参考模板值）；ActiveReactions.Add
+        """
+        self._require_fluid_pkg()
+        rset = self._get_reaction_set(set_name)
+        component_names = self._fluid_package_component_names()
+        if not component_names:
+            raise HYSYSDriverError("无法获取流体包组分顺序")
+
+        unknown = [key for key in stoichiometry if key not in component_names]
+        if unknown:
+            raise HYSYSDriverError(f"化学计量含流体包不存在的组分：{unknown}")
+        if base_component not in component_names:
+            raise HYSYSDriverError(
+                f"基准组分 {base_component!r} 不在流体包组分 {component_names} 中"
+            )
+        percent = float(conversion_percent)
+        if not 0.0 <= percent <= 100.0:
+            raise ValueError(f"转化率必须在 0~100%，收到 {conversion_percent!r}")
+
+        manager = self._case.BasisManager.ReactionPackageManager
+        try:
+            reaction = manager.Reactions.Add(reaction_name, "conversionrxn")
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"创建 conversionrxn {reaction_name!r} 失败："
+                f"{_com_error_detail(exc)}"
+            ) from exc
+
+        try:
+            for component_name in component_names:
+                reaction.Reactants.Add(component_name)
+            coefficients = tuple(
+                float(stoichiometry.get(component_name, 0.0))
+                for component_name in component_names
+            )
+            reaction.ReactantStoichCoefValue = coefficients
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"设置反应 {reaction_name!r} 反应物/化学计量失败："
+                f"{_com_error_detail(exc)}"
+            ) from exc
+
+        base_obj = None
+        try:
+            base_obj = self._fluid_pkg.Components.Item(base_component)
+        except Exception:
+            base_obj = None
+        for candidate in (base_obj, base_component):
+            if candidate is None:
+                continue
+            try:
+                reaction.BaseComponent = candidate
+                break
+            except Exception:
+                continue
+        else:
+            raise HYSYSDriverError(
+                f"设置反应 {reaction_name!r} BaseComponent 失败"
+            )
+
+        try:
+            reaction.ConversionCoefficientsValue = (percent, 0.0, 0.0)
+            reaction.ReactionPhase = int(reaction_phase)
+            rset.ActiveReactions.Add(reaction)
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"配置反应 {reaction_name!r} 转化率/相态/挂载失败："
+                f"{_com_error_detail(exc)}"
+            ) from exc
+
+        self.logger.info(
+            "已添加 conversionrxn：%s（base=%s, C0=%.4f, stoich=%s）",
+            reaction_name, base_component, percent, stoichiometry,
+        )
+        return reaction_name
 
     def connect_reactor(
         self,
@@ -1312,6 +1447,20 @@ class HYSYSDriver:
         if operation is None:
             raise HYSYSDriverError(f"单元操作 {name!r} 返回空对象")
         return operation
+
+    def _get_reaction_set(self, name: str) -> Any:
+        self._require_case()
+        rset = self._reaction_sets.get(name)
+        if rset is not None:
+            return rset
+        try:
+            rset = self._case.BasisManager.ReactionPackageManager.ReactionSets.Item(name)
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"反应集 {name!r} 不存在：{_com_error_detail(exc)}"
+            ) from exc
+        self._reaction_sets[name] = rset
+        return rset
 
     def _get_energy_stream(self, name: str) -> Any:
         self._require_case()

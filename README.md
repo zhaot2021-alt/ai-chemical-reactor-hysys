@@ -190,7 +190,7 @@ python src\agent.py run --plan plans\gibbs_reformer.json --visible --log-level D
 python src\agent.py run --plan plans\toluene_disproportionation.json --visible --log-level DEBUG
 ```
 
-> Gibbs 场景保持 FEED 520℃，通过 `Q-GIBBS` 能量流补热到 710℃/600℃；Conversion 场景依赖 `output/ref_conversion.hsc` 结构模板（50% 转化率）。
+> Gibbs 场景保持 FEED 520℃，通过 `Q-GIBBS` 能量流补热到 710℃/600℃；Conversion 场景由 plan.reactions 动态创建反应集/反应/反应器，需要 LLM 给出已配平反应式。
 
 ### 联合验收结果（2026-10-26）
 
@@ -226,7 +226,7 @@ python src\agent.py run --plan plans\toluene_disproportionation.json --visible -
 - 阶段1测试故意不含组成，用于验证 COM 连通；阶段2A测试含等摩尔组成并完成求解。
 - Gibbs/Conversion 反应器已可创建/连接/求解；Equilibrium 尚未接入执行器。
 - Gibbs 通过 `Q-GIBBS` 能量流补热，FEED 保持 520℃；duty 由目标出口温度反算。
-- 当前 Conversion 执行器使用 50% 甲苯歧化模板，其他转化率/反应体系尚未泛化。
+- Conversion 执行器支持 plan.reactions 中的组分配平、BaseComponent 与转化率；LLM 未给出反应式时拒绝猜测。
 - LLM 规划在当前机器生成 plan；远程执行不依赖 key。
 - HYSYS COM 无完整公开文档：仅使用有公开文档/工程代码/远程实测印证的接口；不确定项在代码中标注 **【需要在Excel VBA Object Browser核对】** 并带回退。
 - 默认优先附着已运行的 HYSYS 实例；本次启动的实例在退出时会 `Quit` 并检查 `hysys.exe` 残留。
