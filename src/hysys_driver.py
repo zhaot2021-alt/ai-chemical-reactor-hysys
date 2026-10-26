@@ -627,8 +627,8 @@ class HYSYSDriver:
         self.logger.info("能量流 %s HeatFlow = %.6g kJ/h", name, value)
         return name
 
-    def create_reaction_set(self, name: str) -> str:
-        """创建 Conversion 反应集（V15 实测 ReactionSets.Add(name, 'Conversion')）。"""
+    def create_reaction_set(self, name: str, set_type: str = "Conversion") -> str:
+        """创建反应集（V15 实测 ReactionSets.Add(name, 'Conversion'/'Equilibrium')）。"""
         self._require_case()
         set_name = str(name).strip()
         if not set_name:
@@ -637,7 +637,7 @@ class HYSYSDriver:
             raise HYSYSDriverError(f"反应集 {set_name!r} 已存在")
         try:
             rset = self._case.BasisManager.ReactionPackageManager.ReactionSets.Add(
-                set_name, "Conversion"
+                set_name, set_type
             )
         except Exception as exc:  # noqa: BLE001
             raise HYSYSDriverError(
@@ -756,6 +756,63 @@ class HYSYSDriver:
         self.logger.info(
             "已添加 conversionrxn：%s（base=%s, C0=%.4f, stoich=%s）",
             reaction_name, base_component, percent, stoichiometry,
+        )
+        return reaction_name
+
+    def add_equilibrium_reaction(
+        self,
+        set_name: str,
+        reaction_name: str,
+        stoichiometry: Mapping[str, float],
+        equilibrium_constant: float,
+        *,
+        reaction_phase: int = 0,
+    ) -> str:
+        """
+        创建 equilibriumrxn 并设置 EquilibriumConstant（V15 实测）：
+          Reactions.Add(name,"equilibriumrxn")
+          Reactants.Add(全部组分) / ReactantStoichCoefValue
+          EquilibriumConstant = Ka；ReactionPhase=0
+        """
+        self._require_fluid_pkg()
+        rset = self._get_reaction_set(set_name)
+        component_names = self._fluid_package_component_names()
+        unknown = [key for key in stoichiometry if key not in component_names]
+        if unknown:
+            raise HYSYSDriverError(f"化学计量含流体包不存在的组分：{unknown}")
+        ka = float(equilibrium_constant)
+        if not math.isfinite(ka) or ka <= 0:
+            raise ValueError(f"平衡常数 Ka 必须是正有限数，收到 {equilibrium_constant!r}")
+
+        manager = self._case.BasisManager.ReactionPackageManager
+        try:
+            reaction = manager.Reactions.Add(reaction_name, "equilibriumrxn")
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"创建 equilibriumrxn {reaction_name!r} 失败："
+                f"{_com_error_detail(exc)}"
+            ) from exc
+
+        try:
+            for component_name in component_names:
+                reaction.Reactants.Add(component_name)
+            reaction.ReactantStoichCoefValue = tuple(
+                float(stoichiometry.get(component_name, 0.0))
+                for component_name in component_names
+            )
+            # V15 实测：KEqValue 只读；EquilibriumConstant 可写
+            reaction.EquilibriumConstant = ka
+            reaction.ReactionPhase = int(reaction_phase)
+            rset.ActiveReactions.Add(reaction)
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"配置 equilibriumrxn {reaction_name!r} 失败："
+                f"{_com_error_detail(exc)}"
+            ) from exc
+
+        self.logger.info(
+            "已添加 equilibriumrxn：%s（Ka=%.6g, stoich=%s）",
+            reaction_name, ka, stoichiometry,
         )
         return reaction_name
 

@@ -55,8 +55,9 @@ Methane,H2O,CO,CO2,Hydrogen,Toluene,Benzene,o-Xylene,m-Xylene,p-Xylene。
    {
      "name": "Rxn-1",
      "stoichiometry": {"组分ID": 系数},
-     "base_component": "组分ID",
-     "conversion_percent": 数字
+     "base_component": "组分ID或空字符串",
+     "conversion_percent": 数字或null,
+     "equilibrium_constant": 数字或null
    }
  ],
  "notes": ["..."]
@@ -189,6 +190,8 @@ def _normalize_plan(plan: dict[str, Any]) -> dict[str, Any]:
             "base_component": str(reaction.get("base_component") or ""),
             "conversion_percent": float(reaction.get("conversion_percent"))
             if reaction.get("conversion_percent") is not None else None,
+            "equilibrium_constant": float(reaction.get("equilibrium_constant"))
+            if reaction.get("equilibrium_constant") is not None else None,
         })
     plan["reactions"] = normalized_reactions
     return plan

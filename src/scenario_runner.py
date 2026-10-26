@@ -311,3 +311,90 @@ def run_conversion(
         "actual_conversion_percent": actual_conversion,
         "hsc_path": save_path,
     }
+
+
+def run_equilibrium(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
+    """
+    通用 Equilibrium：按 plan.reactions 的化学计量和 EquilibriumConstant(Ka)
+    动态创建反应集/平衡反应/平衡反应器，求解并读产物。
+    """
+    components = _require_components(plan)
+    composition = _require_feed_composition(plan)
+    reactions = plan.get("reactions") or []
+    if not reactions:
+        raise ValueError("Equilibrium plan 缺少 reactions（化学计量和 Ka）")
+
+    feed_t_c = plan.get("feed_temperature_c")
+    pressure_bar = plan.get("pressure_bar")
+    molar_flow = plan.get("molar_flow_kmolh")
+    if feed_t_c is None or pressure_bar is None:
+        raise ValueError("Equilibrium plan 缺少 feed_temperature_c / pressure_bar")
+    if molar_flow is None:
+        raise ValueError(
+            "Equilibrium plan 需要 molar_flow_kmolh（当前不猜质量流量换算）"
+        )
+    molar_flow = float(molar_flow)
+    if molar_flow <= 0:
+        raise ValueError(f"摩尔流量必须为正，收到 {molar_flow!r}")
+
+    case_name = driver.new_case(
+        f"ChemAI_Equilibrium_{time.strftime('%Y%m%d_%H%M%S')}"
+    )
+    driver.create_fluid_package(
+        config.FLUID_PACKAGE_NAME,
+        property_package=config.PROPERTY_PACKAGE_NAME,
+        components=components,
+    )
+    driver.create_material_stream(
+        "FEED",
+        config.c_to_k(float(feed_t_c)),
+        config.bar_to_kpa(float(pressure_bar)),
+        molar_flow,
+    )
+    driver.set_stream_composition("FEED", composition)
+
+    set_name = "EqSet"
+    driver.create_reaction_set(set_name, set_type="Equilibrium")
+    driver.associate_reaction_set(set_name)
+    for index, reaction in enumerate(reactions, start=1):
+        reaction_name = str(reaction.get("name") or f"EqRxn-{index}")
+        stoich = reaction.get("stoichiometry") or {}
+        ka = reaction.get("equilibrium_constant")
+        if ka is None:
+            raise ValueError(
+                f"反应 {reaction_name!r} 缺少 equilibrium_constant（Ka）；"
+                "Equilibrium 不接受猜测的热力学参数"
+            )
+        driver.add_equilibrium_reaction(
+            set_name, reaction_name, stoich, float(ka)
+        )
+
+    driver.create_empty_material_stream("VAPOUR")
+    driver.create_empty_material_stream("LIQUID")
+    driver.create_reactor("equilibrium", "R-EQ")
+    driver.connect_reactor(
+        "R-EQ", ["FEED"], "VAPOUR", "LIQUID",
+        pressure_drop_kpa=0.0,
+        reaction_set_name=set_name,
+    )
+    driver.solve_case()
+    feed = driver.read_stream_results("FEED")
+    vapour = driver.read_stream_results("VAPOUR")
+    liquid = driver.read_stream_results("LIQUID")
+    save_path = driver.save_case(
+        Path(config.OUTPUT_DIR) / "equilibrium_case.hsc"
+    )
+    if not vapour.get("solved") and not liquid.get("solved"):
+        raise RuntimeError("Equilibrium 产物未求解")
+    return {
+        "scenario": "equilibrium",
+        "case_name": case_name,
+        "reactor_type": plan.get("reactor_type"),
+        "reason": plan.get("reason"),
+        "components": components,
+        "reactions": reactions,
+        "feed": feed,
+        "vapour_product": vapour,
+        "liquid_product": liquid,
+        "hsc_path": save_path,
+    }
