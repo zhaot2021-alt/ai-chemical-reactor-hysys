@@ -5,7 +5,7 @@
 系统接收自然语言反应描述，选择反应器类型并在 Aspen HYSYS V15 中实际创建、配置、求解，返回真实产物结果。
 
 当前覆盖：
-- 三类核心反应器：**Gibbs、Conversion、Equilibrium（数值 Ka）**；
+- 五类反应器：**Gibbs、Conversion、Equilibrium（数值 Ka）、PFR（平推流）、CSTR（全混流）**；
 - 两个必测场景：甲烷蒸汽重整（710/600℃）、甲苯歧化（380℃/2.5MPa/10000kg/h，50%）；
 - 31 个 HYSYS 标准组分（组分 ID 来自本机 V15 组分列表实测输出）。
 
@@ -62,12 +62,27 @@ HYSYS V15 COM 文档不完整，主要问题均通过黑盒探针 + 类型库成
 - Gibbs：按 plan 的组分/组成/目标出口温度动态创建，能量流 duty 二分反算；
 - Conversion：按 plan.reactions 的已配平反应式创建 `conversionrxn`，支持任意转化率；
 - Equilibrium：按 plan.reactions 的数值 Ka 创建 `equilibriumrxn`，已用 RWGS（Ka=1）验证闭环；
-- 31 个标准组分，LLM 可从自然语言提取组分/工况/反应式。
+- Kinetic PFR/CSTR：按 plan.reactions[].kinetics（AE/频率因子/反应级数）与 reactor_spec（体积/管长管径/液位）
+  动态创建 `kineticrxn` + `PFReactorop`/`KineticReactorop`；LLM 按考核规则"液相 CSTR、气相 PFR"选型；
+- 31 个标准组分，LLM 可从自然语言提取组分/工况/反应式；质量流量按组分库分子量自动换算摩尔流量。
+
+### kinetic 动力学验证（2026-10-26 远程实测）
+
+RWGS：CO₂ + H₂ → CO + H₂O，AE=50000 kJ/kgmole、A=1000 m³/kgmole·s（浓度基准 kgmole/m³），
+进料 573 K / 10 bar / 100 kmol·h⁻¹（CO₂:H₂=1:1），V=1 m³：
+
+| 反应器 | 出口温度 | CO/H₂O 摩尔分数 | CO₂ 转化率 | 手算对照 |
+|---|---|---|---|---|
+| PFR | 562.5 K（吸热降温） | 0.989% / 0.989% | 1.98% | 二级反应解析解 ≈2.1% ✓ |
+| CSTR（液位 50%） | 568.0 K | 0.498% / 0.498% | 1.00% | 气相停留体积减半后解析解 ≈1.0% ✓ |
+
+PFR 转化率约为同体积 CSTR 的 2 倍，符合正级数反应器理论；吸热反应出口降温且与转化量正相关，
+验证了 HYSYS 求解结果与 COM 写入参数的物理一致性。
 
 ## 7. 限制（如实说明）
 
-- CSTR/PFR 动力学反应器未实现；
 - Equilibrium 仅支持数值 Ka，尚未接入吉布斯自由能形式；
+- kinetic 仅支持浓度基准（Basis=3）幂律动力学；LHHW/异相催化未实现；
 - LLM 在本地运行、远程只执行 plan；新需求需本地 key 生成 plan；
 - 复杂/不常见组分可能不在 31 个库内；
 - 未做交互式缺参澄清，plan 缺字段时直接报错；

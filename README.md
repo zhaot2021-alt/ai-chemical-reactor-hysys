@@ -16,9 +16,10 @@
 | **Stage 1 — 连通性基础层** | COM 连接、Simulation Case、PR 流体包、10 个标准组分、FEED 物流、`.hsc`、COM 释放 | **2026-10-26 远程验收通过** |
 | **Stage 2A — 进料组成与求解** | 摩尔组成写入、Solver、T/P/F/汽化率/组成读回 | **2026-10-26 远程验收通过** |
 | **Stage 2B — 反应器建模** | Gibbs 能量流补热、Conversion 动态反应配置、Equilibrium 数值 Ka | **2026-10-26 通用路径联调通过** |
+| **Stage 2C — 动力学反应器** | kineticrxn + PFR/CSTR（TypeName/成员/单位全部实测，结果与解析解吻合） | **2026-10-26 远程验证通过** |
 | **Stage 3 — AI 编排** | 本地 LLM 生成 plan，远程执行 plan | **2026-10-26 两段式联调通过** |
 
-阶段1/2A/2B 与两段式 AI 入口均已完成；两个必测场景已通过统一入口远程联调。
+五种反应器（Gibbs / Conversion / Equilibrium / PFR / CSTR）全部闭环；两个必测场景与动力学通用场景均已通过统一入口远程联调。
 
 ## 架构概览
 
@@ -198,8 +199,9 @@ python src\agent.py run --plan plans\toluene_disproportionation.json --visible -
 |---|---|
 | 甲烷蒸汽重整（Gibbs） | FEED 520℃；能量流 duty 38.87 / 19.63 ×10⁶ kJ/h；710℃：CH4 9.63% / H2O 38.46% / CO 4.56% / CO2 6.73% / H2 40.61%；600℃：CH4 16.17% / H2O 49.75% / CO 1.17% / CO2 5.88% / H2 27.03% |
 | 甲苯歧化（Conversion） | 380℃ / 2.5 MPa / 10000 kg/h，实际转化率 **50.00%**；苯 25%，邻/间/对二甲苯各约 8.3%，甲苯 50% |
+| 动力学 RWGS（PFR / CSTR） | 573 K / 10 bar / V=1 m³，AE=50000 kJ/kgmole、A=1000 m³/kgmole·s；PFR 转化率 1.98%、CSTR 1.00%，与解析解吻合（见 doc/REPORT_DRAFT.md §6） |
 
-两个场景均由 `agent.py run` 读取 LLM plan 执行，远程不需要 LLM key；HYSYS 正常 Quit，无后台残留。
+所有场景均由 `agent.py run` 读取 LLM plan 执行，远程不需要 LLM key；HYSYS 正常 Quit，无后台残留。
 
 ## 单位约定
 
@@ -221,12 +223,13 @@ python src\agent.py run --plan plans\toluene_disproportionation.json --visible -
 
 阶段1/2A排查中已确认 `pengrob` token、Basis 提交顺序、`ComponentMolarFractionValue` 写入和 Solver 状态接口；工具保留用于后续版本或新环境复测。
 
-## 当前边界（阶段2B）
+## 当前边界（阶段2C）
 
 - 阶段1测试故意不含组成，用于验证 COM 连通；阶段2A测试含等摩尔组成并完成求解。
-- Gibbs/Conversion/Equilibrium（数值 Ka）反应器已可创建/连接/求解；CSTR/PFR 动力学未实现。
+- Gibbs/Conversion/Equilibrium（数值 Ka）/PFR/CSTR 反应器已可创建/连接/求解。
 - Gibbs 通过 `Q-GIBBS` 能量流补热，FEED 保持 520℃；duty 由目标出口温度反算。
 - Conversion 执行器支持 plan.reactions 中的组分配平、BaseComponent 与转化率；Equilibrium 支持数值 Ka；LLM 未给出数据时拒绝猜测。
+- kinetic 仅支持浓度基准幂律动力学（Basis=3）；LHHW/异相催化未实现。
 - 标准组分库扩展至 31 个（含 Oxygen/Nitrogen/Ethane/Propane 等，均来自本机 HYSYS 组分列表）。
 - LLM 规划在当前机器生成 plan；远程执行不依赖 key。
 - HYSYS COM 无完整公开文档：仅使用有公开文档/工程代码/远程实测印证的接口；不确定项在代码中标注 **【需要在Excel VBA Object Browser核对】** 并带回退。
