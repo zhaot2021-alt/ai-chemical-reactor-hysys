@@ -166,59 +166,6 @@ def setup_case(app):
     return case, fluid_pkg, feed
 
 
-def find_operation_collection(flowsheet):
-    """HYSYS 不同版本/文档出现 Operations / UnitOperations / Operation。"""
-    candidates = []
-    for attribute in ("Operations", "UnitOperations", "Operation"):
-        try:
-            collection = getattr(flowsheet, attribute)
-        except Exception as exc:  # noqa: BLE001
-            report(f"\n  Flowsheet.{attribute} 不可用：{com_detail(exc)}")
-            continue
-        report(f"\n  Flowsheet.{attribute} = {collection!r}")
-        dump_type_info(
-            collection, f"Flowsheet.{attribute}",
-            filters=("add", "item", "count", "names", "name"),
-        )
-        candidates.append((attribute, collection))
-
-    for attribute, collection in candidates:
-        for method_name in ("Add", "add"):
-            try:
-                method = getattr(collection, method_name)
-                if callable(method):
-                    report(
-                        f"  使用 Flowsheet.{attribute}.{method_name} 尝试创建反应器"
-                    )
-                    return collection
-            except Exception:
-                continue
-    return candidates[0][1] if candidates else None
-
-
-def try_add_operation(collection, type_name: str, operation_name: str):
-    """尝试 Add(type) / Add(type,name) / Add(name,type) 三种签名。"""
-    attempts = (
-        (f"Add({type_name!r})", lambda: collection.Add(type_name)),
-        (
-            f"Add({type_name!r}, {operation_name!r})",
-            lambda: collection.Add(type_name, operation_name),
-        ),
-        (
-            f"Add({operation_name!r}, {type_name!r})",
-            lambda: collection.Add(operation_name, type_name),
-        ),
-    )
-    for description, call in attempts:
-        try:
-            operation = call()
-            report(f"  {description} 成功 -> {operation!r}")
-            return operation
-        except Exception as exc:  # noqa: BLE001
-            report(f"  {description} 失败：{com_detail(exc)}")
-    return None
-
-
 def dump_operation(operation, label: str) -> None:
     report(f"\n--- [{label}] 反应器对象 ---")
     report(f"  对象：{operation!r}")
@@ -234,9 +181,52 @@ def dump_operation(operation, label: str) -> None:
     )
 
 
+def operations_for_type(flowsheet, type_name: str):
+    """Flowsheet.Operations 是带 OperClassOrType 参数的属性。"""
+    attempts = (
+        (f"Operations({type_name!r})", lambda: flowsheet.Operations(type_name)),
+        (
+            f"Operations(OperClassOrType={type_name!r})",
+            lambda: flowsheet.Operations(OperClassOrType=type_name),
+        ),
+    )
+    for description, call in attempts:
+        try:
+            collection = call()
+            report(f"  {description} 成功 -> {collection!r}")
+            return collection
+        except Exception as exc:  # noqa: BLE001
+            report(f"  {description} 失败：{com_detail(exc)}")
+    return None
+
+
+def try_add_operation(collection, type_name: str, operation_name: str):
+    """按类型集合尝试 Add()/Add(name)/Add(name,Type)/Add(Type,name)。"""
+    attempts = (
+        ("Add()", lambda: collection.Add()),
+        (f"Add({operation_name!r})", lambda: collection.Add(operation_name)),
+        (
+            f"Add({operation_name!r}, {type_name!r})",
+            lambda: collection.Add(operation_name, type_name),
+        ),
+        (
+            f"Add({type_name!r}, {operation_name!r})",
+            lambda: collection.Add(type_name, operation_name),
+        ),
+    )
+    for description, call in attempts:
+        try:
+            operation = call()
+            report(f"  {description} 成功 -> {operation!r}")
+            return operation
+        except Exception as exc:  # noqa: BLE001
+            report(f"  {description} 失败：{com_detail(exc)}")
+    return None
+
+
 def probe_operations(case) -> None:
     report("\n" + "=" * 78)
-    report("第 1 部分：Flowsheet / 反应器对象")
+    report("第 1 部分：Flowsheet / 反应器对象（参数化 Operations）")
     report("=" * 78)
 
     flowsheet = case.Flowsheet
@@ -245,15 +235,25 @@ def probe_operations(case) -> None:
         filters=("operat", "add", "reactor", "unit", "stream"),
     )
 
-    collection = find_operation_collection(flowsheet)
-    if collection is None:
-        report("  没有找到可用的 Operations / UnitOperations 集合")
-        return
-
     groups = (
-        ("Gibbs", ("GibbsReactor", "Gibbs Reactor")),
-        ("Conversion", ("ConversionReactor", "Conversion Reactor")),
-        ("Equilibrium", ("EquilibriumReactor", "Equilibrium Reactor")),
+        (
+            "Gibbs",
+            ("GibbsReactor", "Gibbs Reactor", "HYSYS.GibbsReactor", "Gibbs"),
+        ),
+        (
+            "Conversion",
+            (
+                "ConversionReactor", "Conversion Reactor",
+                "HYSYS.ConversionReactor", "Conversion",
+            ),
+        ),
+        (
+            "Equilibrium",
+            (
+                "EquilibriumReactor", "Equilibrium Reactor",
+                "HYSYS.EquilibriumReactor", "Equilibrium",
+            ),
+        ),
     )
 
     for label, candidates in groups:
@@ -261,6 +261,13 @@ def probe_operations(case) -> None:
         report(f"尝试创建 {label} 反应器")
         created = None
         for index, type_name in enumerate(candidates, start=1):
+            collection = operations_for_type(flowsheet, type_name)
+            if collection is None:
+                continue
+            dump_type_info(
+                collection, f"Operations({type_name!r})",
+                filters=("add", "item", "count", "names", "name"),
+            )
             operation = try_add_operation(
                 collection, type_name, f"Probe_{label}_{index}"
             )
@@ -272,24 +279,37 @@ def probe_operations(case) -> None:
         else:
             report(f"  {label} 反应器：所有候选类型名均未创建成功")
 
-    try:
-        count = int(collection.Count)
-        report(f"\n  Operations 数量：{count}")
-        for start in (0, 1):
-            items = []
-            for index in range(start, start + count):
-                try:
-                    items.append(collection.Item(index))
-                except Exception:
-                    items = []
-                    break
-            if items:
-                for operation in items:
-                    safe_read(operation, "Name", "Operation")
-                    safe_read(operation, "TypeName", "Operation")
-                break
-    except Exception as exc:  # noqa: BLE001
-        report(f"  枚举 Operations 失败：{com_detail(exc)}")
+
+def try_add_reaction_set(reaction_sets) -> None:
+    """测试 ReactionSets.Add(name, Type) 的 Type 候选。"""
+    report("\n  测试创建 Reaction Set")
+    type_candidates = (
+        "Conversion", "Equilibrium", "Kinetic",
+        "ConversionReaction", "EquilibriumReaction",
+    )
+    for set_type in type_candidates:
+        set_name = f"Probe_Set_{set_type}"
+        attempts = (
+            (
+                f"Add({set_name!r}, {set_type!r})",
+                lambda: reaction_sets.Add(set_name, set_type),
+            ),
+            (f"Add({set_name!r})", lambda: reaction_sets.Add(set_name)),
+            ("Add()", lambda: reaction_sets.Add()),
+        )
+        for description, call in attempts:
+            try:
+                new_set = call()
+                report(f"  ReactionSets.{description} 成功 -> {new_set!r}")
+                safe_read(new_set, "Name", "ReactionSet")
+                safe_read(new_set, "TypeName", "ReactionSet")
+                dump_type_info(
+                    new_set, "ReactionSet",
+                    filters=("reaction", "add", "conversion", "name", "type"),
+                )
+                return
+            except Exception as exc:  # noqa: BLE001
+                report(f"  ReactionSets.{description} 失败：{com_detail(exc)}")
 
 
 def probe_reaction_packages(case, fluid_pkg) -> None:
@@ -309,6 +329,14 @@ def probe_reaction_packages(case, fluid_pkg) -> None:
         )
         for attribute in ("ReactionSets", "Name", "Count"):
             safe_read(reaction_package, attribute, "ReactionPackage")
+        try:
+            package_sets = reaction_package.ReactionSets
+        except Exception as exc:  # noqa: BLE001
+            report(f"  ReactionPackage.ReactionSets 读取失败：{com_detail(exc)}")
+        else:
+            dump_type_info(
+                package_sets, "ReactionPackage.ReactionSets", filters=None
+            )
 
     try:
         manager = case.BasisManager.ReactionPackageManager
@@ -322,7 +350,7 @@ def probe_reaction_packages(case, fluid_pkg) -> None:
         filters=("reaction", "set", "package", "add", "item", "count", "name"),
     )
     for attribute in (
-        "ReactionPackages", "ReactionSets", "Count", "Names",
+        "ReactionPackages", "ReactionSets", "Reactions", "Count", "Names",
     ):
         try:
             value = getattr(manager, attribute)
@@ -330,8 +358,10 @@ def probe_reaction_packages(case, fluid_pkg) -> None:
             report(f"  manager.{attribute} 读取失败：{com_detail(exc)}")
             continue
         report(f"  manager.{attribute} = {value!r}")
-        if attribute in ("ReactionPackages", "ReactionSets"):
+        if attribute in ("ReactionPackages", "ReactionSets", "Reactions"):
             dump_type_info(value, f"ReactionPackageManager.{attribute}", filters=None)
+        if attribute == "ReactionSets":
+            try_add_reaction_set(value)
 
 
 def main() -> int:
