@@ -391,6 +391,141 @@ class HYSYSDriver:
         self.logger.info("Case 已创建：%s", case_name)
         return case_name
 
+    def open_case(self, path: str | Path) -> str:
+        """
+        打开已有 .hsc 模板 Case，并绑定其第一个流体包与已有物流。
+        只使用已印证接口：SimulationCases.Open / FluidPackages.Item / Components。
+        """
+        self._require_app()
+        if self._case is not None:
+            raise HYSYSDriverError(
+                f"当前驱动已关联 Case {self._case_name!r}，请先 shutdown"
+            )
+
+        target = Path(path).expanduser()
+        if not target.is_absolute():
+            target = (Path.cwd() / target).resolve()
+        if not target.exists():
+            raise HYSYSDriverError(f"模板 Case 不存在：{target}")
+
+        self.logger.info("打开模板 Case：%s", target)
+        try:
+            case = self._app.SimulationCases.Open(str(target))
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"打开模板 Case 失败：{target}；{_com_error_detail(exc)}"
+            ) from exc
+
+        try:
+            case.Visible = True
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug("设置模板 Case.Visible=True 失败：%s", exc)
+
+        self._case = case
+        self._case_name = self._read_com_name(case, target.stem)
+
+        try:
+            count = int(case.BasisManager.FluidPackages.Count)
+            if count <= 0:
+                raise HYSYSDriverError("模板 Case 中没有流体包")
+            if count > 1:
+                self.logger.warning(
+                    "模板 Case 有 %d 个流体包，当前绑定第一个", count
+                )
+            fluid_pkg = case.BasisManager.FluidPackages.Item(0)
+        except HYSYSDriverError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"绑定模板流体包失败：{_com_error_detail(exc)}"
+            ) from exc
+
+        self._fluid_pkg = fluid_pkg
+        self._streams.clear()
+        self._property_package_name = self._read_property_package_display(fluid_pkg)
+        self._fluid_pkg_name = self._read_com_name(
+            fluid_pkg, config.FLUID_PACKAGE_NAME
+        )
+        self._component_ids = list(self._fluid_package_component_names())
+
+        self.logger.info(
+            "模板已打开：%s（FP=%s，PP=%s，组分=%s，物流=%s，操作=%s）",
+            self._case_name,
+            self._fluid_pkg_name,
+            self._property_package_name,
+            self._component_ids,
+            self.list_streams(),
+            self.list_operations(),
+        )
+        return self._case_name
+
+    def list_streams(self) -> list[dict[str, str]]:
+        """列出模板/当前 Case 的物料流（仅名称/类型，不暴露 COM）。"""
+        self._require_case()
+        result: list[dict[str, str]] = []
+        try:
+            collection = self._case.Flowsheet.MaterialStreams
+            count = int(collection.Count)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("读取 MaterialStreams 失败：%s", _com_error_detail(exc))
+            return result
+
+        for start in (0, 1):
+            items = []
+            for index in range(start, start + count):
+                try:
+                    items.append(collection.Item(index))
+                except Exception:
+                    items = []
+                    break
+            if items:
+                for stream in items:
+                    try:
+                        result.append(
+                            {
+                                "name": str(stream.Name),
+                                "type": str(getattr(stream, "TypeName", "")),
+                            }
+                        )
+                    except Exception:
+                        continue
+                break
+        return result
+
+    def list_operations(self) -> list[dict[str, str]]:
+        """列出模板/当前 Case 的单元操作（仅名称/类型，不暴露 COM）。"""
+        self._require_case()
+        result: list[dict[str, str]] = []
+        try:
+            collection = self._case.Flowsheet.Operations
+            count = int(collection.Count)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("读取 Operations 失败：%s", _com_error_detail(exc))
+            return result
+
+        for start in (0, 1):
+            items = []
+            for index in range(start, start + count):
+                try:
+                    items.append(collection.Item(index))
+                except Exception:
+                    items = []
+                    break
+            if items:
+                for operation in items:
+                    try:
+                        result.append(
+                            {
+                                "name": str(operation.Name),
+                                "type": str(getattr(operation, "TypeName", "")),
+                                "tagged_type": str(getattr(operation, "TaggedName", "")),
+                            }
+                        )
+                    except Exception:
+                        continue
+                break
+        return result
+
     def create_fluid_package(
         self,
         name: str | None = None,
@@ -727,11 +862,7 @@ class HYSYSDriver:
         读取物流的温度/压力/摩尔流量，返回只含数值的安全字典。
         读取失败时对应值为 None，仅记录 warning。
         """
-        stream = self._streams.get(name)
-        if stream is None:
-            raise HYSYSDriverError(
-                f"物流 {name!r} 不存在；现有物流：{list(self._streams)}"
-            )
+        stream = self._get_stream(name)
 
         values: dict[str, Any] = {
             "name": name,
@@ -781,11 +912,7 @@ class HYSYSDriver:
           - 本方法不调用 solve；由 main 明确调用 solve_case()
         """
         self._require_fluid_pkg()
-        stream = self._streams.get(name)
-        if stream is None:
-            raise HYSYSDriverError(
-                f"物流 {name!r} 不存在；现有物流：{list(self._streams)}"
-            )
+        stream = self._get_stream(name)
         if not isinstance(mole_fractions, Mapping) or not mole_fractions:
             raise ValueError("mole_fractions 必须是非空的 {组分ID: 摩尔分数} 映射")
 
@@ -906,11 +1033,7 @@ class HYSYSDriver:
         读取物流的求解结果：T/P/F、摩尔组成、汽化率、是否已求解。
         返回纯 Python 值，不暴露 COM 对象。
         """
-        stream = self._streams.get(name)
-        if stream is None:
-            raise HYSYSDriverError(
-                f"物流 {name!r} 不存在；现有物流：{list(self._streams)}"
-            )
+        stream = self._get_stream(name)
 
         values = self.read_stream_values(name)
         composition = self._read_stream_composition(stream, name)
@@ -930,6 +1053,26 @@ class HYSYSDriver:
         values["vapour_fraction"] = vapour_fraction
         values["solved"] = composition is not None and vapour_fraction is not None
         return values
+
+    def _get_stream(self, name: str) -> Any:
+        """返回当前 Case 的物流对象；模板物流按名称懒绑定。"""
+        self._require_case()
+        stream = self._streams.get(name)
+        if stream is not None:
+            return stream
+        try:
+            stream = self._case.Flowsheet.MaterialStreams.Item(name)
+        except Exception as exc:  # noqa: BLE001
+            available = [item.get("name") for item in self.list_streams()]
+            raise HYSYSDriverError(
+                f"物流 {name!r} 不存在或无法绑定；现有物流：{available}；"
+                f"{_com_error_detail(exc)}"
+            ) from exc
+        if stream is None:
+            raise HYSYSDriverError(f"物流 {name!r} 绑定结果为空")
+        self._streams[name] = stream
+        self.logger.info("已绑定模板物流：%s", name)
+        return stream
 
     def _fluid_package_component_names(self) -> list[str]:
         """读取流体包实际组分顺序（HYSYS 组成数组的顺序）。"""
