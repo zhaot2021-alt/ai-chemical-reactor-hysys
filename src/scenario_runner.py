@@ -469,7 +469,7 @@ def run_kinetic(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
             total_volume_m3=spec.get("total_volume_m3"),
             tube_length_m=spec.get("tube_length_m"),
             tube_diameter_m=spec.get("tube_diameter_m"),
-            heat_flow_kj_h=spec.get("heat_flow_kj_h"),
+            heat_flow_kj_h=float(spec.get("heat_flow_kj_h", 0.0)),
             phase_type=int(spec.get("phase_type", 5)),
             holdup_init_type=int(spec.get("holdup_init_type", 1)),
         )
@@ -487,7 +487,7 @@ def run_kinetic(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
             pressure_drop_kpa=float(spec.get("pressure_drop_kpa", 0.0)),
             volume_m3=spec.get("volume_m3"),
             liquid_level_pct=spec.get("liquid_level_pct", 50.0),
-            heat_flow_kj_h=spec.get("heat_flow_kj_h"),
+            heat_flow_kj_h=float(spec.get("heat_flow_kj_h", 0.0)),
         )
 
     driver.solve_case()
