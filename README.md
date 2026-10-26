@@ -90,6 +90,7 @@ chem_ai_model/
 │   └── test_stage1.py     # 阶段1联调入口（dry-run / 真实 HYSYS）
 ├── tools/
 │   ├── probe_hysys_property_package.py  # 物性包 COM API 诊断探针
+│   ├── probe_hysys_stream_composition.py # 物流组成/求解 COM 探针
 │   └── read_open_fluid_packages.py      # 只读导出 Case/流体包/真实物性包名
 ├── doc/
 │   └── ARCHITECTURE.md    # 分层架构、接口、COM 可信度、扩展点
