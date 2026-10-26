@@ -23,6 +23,7 @@ import win32com.client
 
 PROGID = "HYSYS.Application"
 REPORT_PATH = None
+INVKIND = {1: "FUNC", 2: "GET", 4: "PUT", 8: "PUTREF"}
 
 _REPORT_LINES: list[str] = []
 
@@ -87,7 +88,8 @@ def dump_type_info(obj, label: str, filters: tuple[str, ...]) -> None:
         name = names[0] if names else "?"
         if not any(token.lower() in name.lower() for token in filters):
             continue
-        report(f"  {name:42s} | params={list(names[1:])}")
+        inv = INVKIND.get(fd.invkind, str(fd.invkind))
+        report(f"  {name:42s} | {inv:6s} | params={list(names[1:])}")
 
 
 def describe_stream(stream, index: int) -> None:
@@ -192,9 +194,44 @@ def main() -> int:
                     filters=(
                         "reaction", "feed", "product", "stream",
                         "inlet", "outlet", "conversion", "temperature",
-                        "pressure", "duty", "vapour", "vapor",
+                        "pressure", "duty", "vapour", "vapor", "energy",
                     ),
                 )
+
+                for attribute in ("Feeds", "AttachedFeeds", "AttachedProducts"):
+                    try:
+                        value = getattr(operation, attribute)
+                    except Exception as exc:  # noqa: BLE001
+                        report(f"      Operation.{attribute} 读取失败：{com_detail(exc)}")
+                        continue
+                    report(f"      Operation.{attribute} = {value!r}")
+                    items = collection_items(value)
+                    if items:
+                        names = []
+                        for item in items:
+                            try:
+                                names.append(str(item.Name))
+                            except Exception:
+                                names.append(repr(item))
+                        report(f"        {attribute} 数量={len(items)}，名称={names}")
+                    dump_type_info(
+                        value, f"Operation.{attribute}",
+                        filters=("add", "item", "count", "names", "attach", "feed", "product", "stream"),
+                    )
+
+                for attribute in (
+                    "VapourProduct", "LiquidProduct",
+                    "VapourProductVar", "LiquidProductVar",
+                    "EnergyStream", "ReactionSet", "PressureDropValue",
+                ):
+                    try:
+                        value = getattr(operation, attribute)
+                    except Exception as exc:  # noqa: BLE001
+                        report(f"      Operation.{attribute} 读取失败：{com_detail(exc)}")
+                        continue
+                    report(f"      Operation.{attribute} = {value!r}")
+                    if value is not None:
+                        safe_get(value, "Name", f"Operation.{attribute}")
 
         report("\n完成：只读操作，未修改/关闭任何 Case。")
         return 0
