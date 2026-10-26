@@ -22,7 +22,7 @@ logger = logging.getLogger("scenario_runner")
 
 TOLUENE_MW_KG_KMOL = 92.1402
 DEFAULT_GIBBS_FLOW_KGMOLEH = 1000.0
-FEED_T_BOUNDS_K = (400.0, 1600.0)
+ENERGY_DUTY_BOUNDS_KJ_H = (0.0, 1.0e8)
 OUTLET_TOL_K = 0.5
 MAX_ITERATIONS = 20
 CONVERSION_TOL = 0.02
@@ -88,35 +88,38 @@ def run_gibbs(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
 
     driver.create_empty_material_stream("VAPOUR")
     driver.create_empty_material_stream("LIQUID")
+    driver.create_energy_stream("Q-GIBBS")
     driver.create_reactor("gibbs", "R-GIBBS")
     driver.connect_reactor(
         "R-GIBBS", ["FEED"], "VAPOUR", "LIQUID",
         pressure_drop_kpa=0.0,
+        energy_stream_name="Q-GIBBS",
     )
 
-    def evaluate(feed_t_k: float) -> dict[str, Any]:
-        driver.set_stream_conditions("FEED", temperature_k=feed_t_k)
+    def evaluate(duty_kj_h: float) -> dict[str, Any]:
+        driver.set_energy_stream_heat_flow("Q-GIBBS", duty_kj_h)
         driver.solve_case()
         vapour = driver.read_stream_results("VAPOUR")
         if not vapour.get("solved"):
-            raise RuntimeError(f"FEED={feed_t_k:.2f} K 时 VAPOUR 未求解")
+            raise RuntimeError(f"duty={duty_kj_h:.6g} kJ/h 时 VAPOUR 未求解")
         return vapour
 
-    def find_feed_temperature(target_k: float) -> tuple[float, dict[str, Any]]:
-        low, high = FEED_T_BOUNDS_K
+    def find_duty(target_k: float) -> tuple[float, dict[str, Any]]:
+        low, high = ENERGY_DUTY_BOUNDS_KJ_H
         low_vap = evaluate(low)
         high_vap = evaluate(high)
         low_t = float(low_vap["temperature_k"])
         high_t = float(high_vap["temperature_k"])
         if not (low_t <= target_k <= high_t):
             raise RuntimeError(
-                f"出口目标 {target_k:.2f} K 不在可达范围 [{low_t:.2f}, {high_t:.2f}]"
+                f"出口目标 {target_k:.2f} K 不在可达范围 "
+                f"[{low_t:.2f}, {high_t:.2f}]（duty {low:g}~{high:g} kJ/h）"
             )
-        best_t, best_vap = low, low_vap
+        best_duty, best_vap = low, low_vap
         for _ in range(MAX_ITERATIONS):
             mid = (low + high) / 2.0
             vap = evaluate(mid)
-            best_t, best_vap = mid, vap
+            best_duty, best_vap = mid, vap
             outlet_t = float(vap["temperature_k"])
             if abs(outlet_t - target_k) <= OUTLET_TOL_K:
                 break
@@ -124,14 +127,14 @@ def run_gibbs(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
                 low = mid
             else:
                 high = mid
-        return best_t, best_vap
+        return best_duty, best_vap
 
     results: dict[str, Any] = {}
     for target_c in targets_c:
         target_k = config.c_to_k(float(target_c))
         logger.info("Gibbs 目标 %.2f℃ → %.2f K", float(target_c), target_k)
-        feed_t_k, _ = find_feed_temperature(target_k)
-        driver.set_stream_conditions("FEED", temperature_k=feed_t_k)
+        duty_kj_h, _ = find_duty(target_k)
+        driver.set_energy_stream_heat_flow("Q-GIBBS", duty_kj_h)
         driver.solve_case()
         vapour = driver.read_stream_results("VAPOUR")
         liquid = driver.read_stream_results("LIQUID")
@@ -141,7 +144,7 @@ def run_gibbs(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
         )
         results[label] = {
             "target_outlet_temperature_c": float(target_c),
-            "effective_feed_temperature_c": config.k_to_c(feed_t_k),
+            "energy_stream_duty_kj_h": duty_kj_h,
             "vapour": vapour,
             "liquid": liquid,
             "hsc_path": save_path,
@@ -162,7 +165,7 @@ def run_gibbs(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
         "feed_temperature_c": float(feed_t_c),
         "pressure_bar": float(pressure_bar),
         "results": results,
-        "note": "Gibbs 反应器为绝热模式；出口温度通过等效预热达成，未伪造温度属性",
+        "note": "FEED 保持 plan 温度；Gibbs 通过能量流提供重整热，duty 由目标出口温度反算",
     }
 
 

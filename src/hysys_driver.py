@@ -151,6 +151,7 @@ class HYSYSDriver:
         self._case: Any = None
         self._fluid_pkg: Any = None
         self._streams: dict[str, Any] = {}
+        self._energy_streams: dict[str, Any] = {}
 
         self._case_name: str | None = None
         self._fluid_pkg_name: str | None = None
@@ -292,6 +293,7 @@ class HYSYSDriver:
 
         # 1) 先释放子对象 COM 引用，再关闭 Case
         self._streams.clear()
+        self._energy_streams.clear()
         self._fluid_pkg = None
         gc.collect()
 
@@ -442,6 +444,7 @@ class HYSYSDriver:
 
         self._fluid_pkg = fluid_pkg
         self._streams.clear()
+        self._energy_streams.clear()
         self._property_package_name = self._read_property_package_display(fluid_pkg)
         self._fluid_pkg_name = self._read_com_name(
             fluid_pkg, config.FLUID_PACKAGE_NAME
@@ -583,6 +586,44 @@ class HYSYSDriver:
         self.logger.info("已创建空物料流：%s", stream_name)
         return stream_name
 
+    def create_energy_stream(self, name: str) -> str:
+        """创建能量流（EnergyStreams.Add(name)，V15 实测可用）。"""
+        self._require_case()
+        stream_name = str(name).strip()
+        if not stream_name:
+            raise ValueError("能量流名称不能为空")
+        if stream_name in self._energy_streams:
+            raise HYSYSDriverError(f"能量流 {stream_name!r} 已存在")
+        try:
+            stream = self._case.Flowsheet.EnergyStreams.Add(stream_name)
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"创建能量流 {stream_name!r} 失败：{_com_error_detail(exc)}"
+            ) from exc
+        self._energy_streams[stream_name] = stream
+        self.logger.info("已创建能量流：%s", stream_name)
+        return stream_name
+
+    def set_energy_stream_heat_flow(
+        self, name: str, heat_flow_kj_h: float
+    ) -> str:
+        """设置能量流热负荷（V15 实测 HeatFlow.SetValue(..., 'kJ/h') 可用）。"""
+        stream = self._get_energy_stream(name)
+        try:
+            value = float(heat_flow_kj_h)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"热负荷必须是数值，收到 {heat_flow_kj_h!r}") from exc
+        if not math.isfinite(value):
+            raise ValueError(f"热负荷必须是有限数值，收到 {heat_flow_kj_h!r}")
+        try:
+            stream.HeatFlow.SetValue(value, "kJ/h")
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"设置能量流 {name!r} HeatFlow 失败：{_com_error_detail(exc)}"
+            ) from exc
+        self.logger.info("能量流 %s HeatFlow = %.6g kJ/h", name, value)
+        return name
+
     def connect_reactor(
         self,
         reactor_name: str,
@@ -592,6 +633,7 @@ class HYSYSDriver:
         *,
         pressure_drop_kpa: float = 0.0,
         reaction_set_name: str | None = None,
+        energy_stream_name: str | None = None,
     ) -> dict[str, Any]:
         """
         按 V15 参考 Case 已印证的方式连接反应器：
@@ -653,6 +695,17 @@ class HYSYSDriver:
                     f"{_com_error_detail(exc)}"
                 ) from exc
 
+        if energy_stream_name:
+            energy = self._get_energy_stream(energy_stream_name)
+            try:
+                # V15 实测：GibbsReactor.EnergyStream 是 PUT
+                operation.EnergyStream = energy
+            except Exception as exc:  # noqa: BLE001
+                raise HYSYSDriverError(
+                    f"连接反应器 {reactor_name!r} 能量流 "
+                    f"{energy_stream_name!r} 失败：{_com_error_detail(exc)}"
+                ) from exc
+
         result = {
             "reactor": reactor_name,
             "feeds": feed_names,
@@ -660,6 +713,7 @@ class HYSYSDriver:
             "liquid_product": liquid_product_name,
             "pressure_drop_kpa": float(pressure_drop_kpa),
             "reaction_set": reaction_set_name,
+            "energy_stream": energy_stream_name,
         }
         self.logger.info("反应器连接完成：%s", result)
         return result
@@ -1258,6 +1312,20 @@ class HYSYSDriver:
         if operation is None:
             raise HYSYSDriverError(f"单元操作 {name!r} 返回空对象")
         return operation
+
+    def _get_energy_stream(self, name: str) -> Any:
+        self._require_case()
+        stream = self._energy_streams.get(name)
+        if stream is not None:
+            return stream
+        try:
+            stream = self._case.Flowsheet.EnergyStreams.Item(name)
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"能量流 {name!r} 不存在：{_com_error_detail(exc)}"
+            ) from exc
+        self._energy_streams[name] = stream
+        return stream
 
     def _get_stream(self, name: str) -> Any:
         """返回当前 Case 的物流对象；模板物流按名称懒绑定。"""
