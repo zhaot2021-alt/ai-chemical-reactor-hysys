@@ -30,3 +30,6 @@ output/probe_*
 # 环境 / 密钥
 .env
 .env.*
+
+# 诊断报告原始文件（运行时产物，探针脚本本身在 tools/）
+output/*.txt
