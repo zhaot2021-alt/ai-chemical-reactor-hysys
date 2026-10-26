@@ -130,6 +130,7 @@ chem_ai_model/
 │   ├── probe_hysys_stream_composition.py # 物流组成/求解 COM 探针
 │   ├── probe_hysys_reactors.py           # 反应器对象模型探针
 │   ├── probe_hysys_reactor_add.py        # 反应器 Add 类型串快速探针
+│   ├── read_open_operations.py           # 只读导出参考 Case 的物流/操作成员
 │   └── read_open_fluid_packages.py       # 只读导出 Case/流体包/真实物性包名
 ├── doc/
 │   └── ARCHITECTURE.md    # 分层架构、接口、COM 可信度、扩展点
@@ -182,6 +183,7 @@ python src\test_stage2.py --no-visible
 - `tools/probe_hysys_stream_composition.py`：验证物流组成写入方式、`Solver.CanSolve`、`IsSolving` 和求解后的流股状态。
 - `tools/probe_hysys_reactors.py`：导出 Flowsheet/Operations/ReactionPackage 成员，并尝试创建 Gibbs / Conversion / Equilibrium 反应器。
 - `tools/probe_hysys_reactor_add.py`：用多种大小写/短名快速定位 V15 的 reactor Add 类型字符串。
+- `tools/read_open_operations.py`：只读导出手动参考 Case 中的物流参数、操作 TypeName 和反应器成员。
 
 阶段1/2A排查中已确认 `pengrob` token、Basis 提交顺序、`ComponentMolarFractionValue` 写入和 Solver 状态接口；工具保留用于后续版本或新环境复测。
 
