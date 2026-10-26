@@ -2,7 +2,7 @@
 
 > 状态：**阶段1、2A、2B 与两段式 Agent 已于 2026-10-26 在 Aspen HYSYS V15 远程工作站验收通过**。
 > 范围：连接/Case/PR/组分/FEED → 组成与求解 → Gibbs/Conversion 反应器 → 结果读回 → 本地 LLM plan + 远程执行。
-> 当前仍有限制：Conversion 依赖手动模板，Equilibrium/CSTR/PFR 未实现；详见 README 的验收边界。
+> 当前仍有限制：Conversion 由 plan.reactions 动态创建（需已配平反应式），Equilibrium/CSTR/PFR 未实现，组分库为 10 个；详见 README 的验收边界。
 >
 > 阶段2B 补充实现（2026-10-26）：`create_reactor`（真实 TypeName：`gibbsreactorop`/`conversionreactorop`/`equilibriumreactorop`）、`open_case`/模板物流绑定、`create_energy_stream`/`set_energy_stream_heat_flow`、`connect_reactor`（Feeds.Add / VapourProduct / LiquidProduct / EnergyStream）、`scenario_runner`、`llm_planner`、`agent.py`。
 
@@ -328,7 +328,7 @@ main.run_stage1()
 4. **新增评估/报表**：作为独立模块消费驱动层返回的安全字典，不访问 COM；
 5. **反应器规则**：规则文本/关键词仍放 `config`，判断逻辑放 parser / LLM。
 
-> 阶段1/2A**没有**任何 Conversion / Equilibrium / Gibbs 创建代码；上述仅为阶段2B的架构预留说明。
+> 阶段2B 已实现 Gibbs/Conversion 的主流程动态创建；Equilibrium、CSTR、PFR 尚未实现。上述为后续扩展说明。
 
 ---
 
@@ -540,8 +540,8 @@ read_stream_results("FEED")
   → T/P/F + mole_fractions + vapour_fraction + solved
 ```
 
-> 状态：**阶段1/2A 远程验收通过**。下一步阶段2B：反应器对象模型探针 → Conversion →
-> Equilibrium/Gibbs → 产物分布读取。反应器 API 仍需先对照 V15 类型库，禁止猜测。
+> 状态：**阶段1/2A/2B 与两段式 Agent 已远程验收通过**。Gibbs 使用能量流补热；
+> Conversion 由 LLM plan 的反应化学计量动态创建。剩余缺口：Equilibrium/CSTR/PFR、通用组分库。
 
 ---
 
