@@ -129,7 +129,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     try:
         from hysys_driver import HYSYSDriver
-        from scenario_runner import run_conversion, run_equilibrium, run_gibbs
+        from scenario_runner import (
+            run_conversion,
+            run_equilibrium,
+            run_gibbs,
+            run_kinetic,
+        )
     except Exception as exc:  # noqa: BLE001
         logging.error("导入 HYSYS 驱动/执行器失败：%s", exc)
         return 1
@@ -144,9 +149,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
             summary = run_conversion(plan, driver, args.template)
         elif reactor_type == "equilibrium":
             summary = run_equilibrium(plan, driver)
+        elif reactor_type in ("pfr", "cstr"):
+            summary = run_kinetic(plan, driver)
         else:
             logging.error(
-                "当前执行器只支持 gibbs / conversion / equilibrium，plan 为 %r",
+                "当前执行器只支持 gibbs / conversion / equilibrium / pfr / cstr，"
+                "plan 为 %r",
                 reactor_type,
             )
             return 1

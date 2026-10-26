@@ -285,6 +285,8 @@ REACTOR_TYPE_IDS = {
     "gibbs": "gibbsreactorop",
     "conversion": "conversionreactorop",
     "equilibrium": "equilibriumreactorop",
+    "pfr": "PFReactorop",
+    "cstr": "KineticReactorop",
 }
 
 # ==================== 反应器选择规则（纯数据，阶段2使用） ====================

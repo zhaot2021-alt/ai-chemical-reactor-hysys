@@ -35,7 +35,7 @@ class LLMPlanError(RuntimeError):
 
 _SYSTEM_PROMPT_TEMPLATE = """你是 Aspen HYSYS 反应器建模助手。只输出一个 JSON 对象，不要输出任何解释或 Markdown。
 按考核规则选择反应器类型：
-1) 有动力学/设备参数：液相 CSTR、气相 PFR；
+1) 有动力学/设备参数：液相 CSTR（reactor_type="cstr"）、气相 PFR（reactor_type="pfr"）；
 2) 无动力学但给出转化率/收率/选择性：Conversion；
 3) 提供平衡常数 Ka 或吉布斯自由能：Equilibrium；
 4) 产物分布未知、复杂高温体系：Gibbs。
@@ -44,7 +44,7 @@ HYSYS 标准组分 ID 只能从以下列表选择：
 
 输出 JSON 字段：
 {
- "reactor_type": "gibbs|conversion|equilibrium",
+ "reactor_type": "gibbs|conversion|equilibrium|pfr|cstr",
  "reason": "中文理由",
  "components": ["标准ID", "..."],
  "feed_composition": {"标准ID": 摩尔分数, "...": 0.0},
@@ -60,14 +60,34 @@ HYSYS 标准组分 ID 只能从以下列表选择：
      "stoichiometry": {"组分ID": 系数},
      "base_component": "组分ID或空字符串",
      "conversion_percent": 数字或null,
-     "equilibrium_constant": 数字或null
+     "equilibrium_constant": 数字或null,
+     "kinetics": {
+       "reaction_phase": 1,
+       "activation_energy_kj_kgmole": 数字或null,
+       "frequency_factor_m3_kgmole_s": 数字或null,
+       "forward_orders": {"组分ID": 级数},
+       "reverse_orders": {"组分ID": 级数},
+       "reverse_activation_energy_kj_kgmole": 数字或0.0,
+       "reverse_frequency_factor_m3_kgmole_s": 数字或0.0
+     }
    }
  ],
+ "reactor_spec": {
+   "total_volume_m3": 数字或null,
+   "tube_length_m": 数字或null,
+   "tube_diameter_m": 数字或null,
+   "volume_m3": 数字或null,
+   "liquid_level_pct": 数字或null,
+   "heat_flow_kj_h": 数字或null,
+   "pressure_drop_kpa": 数字或null
+ },
  "notes": ["..."]
 }
 规则：
 - Conversion 必须根据已配平的化学方程式给出 reactions，反应物系数为负、产物为正；
   若产物异构体比例未指定（如邻/间/对二甲苯），按等摩尔拆分并在 notes 中说明假设；
+- pfr/cstr 必须给出 reactions[].kinetics（活化能 kJ/kgmole、频率因子 m3/kgmole-s、
+  正向级数）和 reactor_spec 设备尺寸（PFR：体积或管长+管径；CSTR：体积）；
 - Gibbs 的 reactions 可以为空数组；
 - 不得编造用户未提供的数值；缺失用 null。甲烷蒸汽重整需包含产物组分 CO/CO2/Hydrogen。"""
 
@@ -156,7 +176,7 @@ def _extract_json(content: str) -> dict[str, Any]:
 
 def _normalize_plan(plan: dict[str, Any]) -> dict[str, Any]:
     reactor_type = str(plan.get("reactor_type", "")).strip().lower()
-    if reactor_type not in ("gibbs", "conversion", "equilibrium"):
+    if reactor_type not in ("gibbs", "conversion", "equilibrium", "pfr", "cstr"):
         raise LLMPlanError(f"不支持的反应器类型：{reactor_type!r}")
     plan["reactor_type"] = reactor_type
 
@@ -189,6 +209,31 @@ def _normalize_plan(plan: dict[str, Any]) -> dict[str, Any]:
         stoich = reaction.get("stoichiometry") or {}
         if not isinstance(stoich, dict) or not stoich:
             raise LLMPlanError("reaction.stoichiometry 为空")
+        kinetics = reaction.get("kinetics") or {}
+        normalized_kinetics = None
+        if isinstance(kinetics, dict) and kinetics:
+            def _num_or_none(field: str):
+                value = kinetics.get(field)
+                return float(value) if value is not None else None
+            normalized_kinetics = {
+                "reaction_phase": int(kinetics.get("reaction_phase", 1)),
+                "activation_energy_kj_kgmole": _num_or_none(
+                    "activation_energy_kj_kgmole"),
+                "frequency_factor_m3_kgmole_s": _num_or_none(
+                    "frequency_factor_m3_kgmole_s"),
+                "forward_orders": {
+                    str(key): float(value)
+                    for key, value in (kinetics.get("forward_orders") or {}).items()
+                },
+                "reverse_orders": {
+                    str(key): float(value)
+                    for key, value in (kinetics.get("reverse_orders") or {}).items()
+                },
+                "reverse_activation_energy_kj_kgmole": float(
+                    kinetics.get("reverse_activation_energy_kj_kgmole", 0.0)),
+                "reverse_frequency_factor_m3_kgmole_s": float(
+                    kinetics.get("reverse_frequency_factor_m3_kgmole_s", 0.0)),
+            }
         normalized_reactions.append({
             "name": str(reaction.get("name") or "Rxn-1"),
             "stoichiometry": {
@@ -199,8 +244,22 @@ def _normalize_plan(plan: dict[str, Any]) -> dict[str, Any]:
             if reaction.get("conversion_percent") is not None else None,
             "equilibrium_constant": float(reaction.get("equilibrium_constant"))
             if reaction.get("equilibrium_constant") is not None else None,
+            "kinetics": normalized_kinetics,
         })
     plan["reactions"] = normalized_reactions
+
+    spec = plan.get("reactor_spec") or {}
+    normalized_spec = {}
+    if isinstance(spec, dict) and spec:
+        for field in (
+            "total_volume_m3", "tube_length_m", "tube_diameter_m",
+            "volume_m3", "liquid_level_pct", "heat_flow_kj_h",
+            "pressure_drop_kpa",
+        ):
+            value = spec.get(field)
+            if value is not None:
+                normalized_spec[field] = float(value)
+    plan["reactor_spec"] = normalized_spec
     return plan
 
 

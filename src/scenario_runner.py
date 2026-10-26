@@ -320,6 +320,175 @@ def run_conversion(
     }
 
 
+def _resolve_molar_flow(plan: dict[str, Any], composition: dict[str, float]) -> float:
+    molar_flow = plan.get("molar_flow_kmolh")
+    if molar_flow is not None:
+        return float(molar_flow)
+    mass_flow = plan.get("mass_flow_kg_h")
+    if mass_flow is None:
+        raise ValueError("kinetic plan 缺少摩尔流量或质量流量")
+    mixture_mw = 0.0
+    for component_id, fraction in composition.items():
+        if fraction <= 1e-12:
+            continue
+        if component_id not in COMPONENT_MW_KG_KMOL:
+            raise ValueError(
+                f"质量流量换摩尔流量缺少 {component_id} 的分子量；"
+                "请提供 molar_flow_kmolh"
+            )
+        mixture_mw += fraction * COMPONENT_MW_KG_KMOL[component_id]
+    molar_flow = float(mass_flow) / mixture_mw
+    if molar_flow <= 0:
+        raise ValueError(f"摩尔流量必须为正，收到 {molar_flow!r}")
+    return molar_flow
+
+
+def run_kinetic(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
+    """
+    通用 kinetic：按 plan 创建 kineticrxn + CSTR/PFR，求解并读产物。
+    plan.reactor_type 为 "pfr" 或 "cstr"（LLM 按相态选择）。
+    """
+    reactor_kind = str(plan.get("reactor_type", "")).strip().lower()
+    if reactor_kind not in ("pfr", "cstr"):
+        raise ValueError(f"run_kinetic 只支持 pfr/cstr，收到 {reactor_kind!r}")
+    components = _require_components(plan)
+    composition = _require_feed_composition(plan)
+    reactions = plan.get("reactions") or []
+    if not reactions:
+        raise ValueError("kinetic plan 缺少 reactions（动力学反应）")
+    for reaction in reactions:
+        kinetics = reaction.get("kinetics") or {}
+        if kinetics.get("activation_energy_kj_kgmole") is None:
+            raise ValueError(
+                f"反应 {reaction.get('name')!r} 缺少 kinetics.activation_energy_kj_kgmole"
+            )
+        if kinetics.get("frequency_factor_m3_kgmole_s") is None:
+            raise ValueError(
+                f"反应 {reaction.get('name')!r} 缺少 kinetics.frequency_factor_m3_kgmole_s"
+            )
+        if not reaction.get("stoichiometry"):
+            raise ValueError(f"反应 {reaction.get('name')!r} 缺少 stoichiometry")
+
+    feed_t_c = plan.get("feed_temperature_c")
+    pressure_bar = plan.get("pressure_bar")
+    if feed_t_c is None or pressure_bar is None:
+        raise ValueError("kinetic plan 缺少 feed_temperature_c / pressure_bar")
+    molar_flow = _resolve_molar_flow(plan, composition)
+
+    spec = plan.get("reactor_spec") or {}
+    if reactor_kind == "pfr":
+        if spec.get("total_volume_m3") is None and (
+            spec.get("tube_length_m") is None or spec.get("tube_diameter_m") is None
+        ):
+            raise ValueError("PFR 需要 total_volume_m3 或 tube_length_m+tube_diameter_m")
+    else:
+        if spec.get("volume_m3") is None:
+            raise ValueError("CSTR 需要 volume_m3")
+
+    case_name = driver.new_case(
+        f"ChemAI_Kinetic_{time.strftime('%Y%m%d_%H%M%S')}"
+    )
+    driver.create_fluid_package(
+        config.FLUID_PACKAGE_NAME,
+        property_package=config.PROPERTY_PACKAGE_NAME,
+        components=components,
+    )
+    driver.create_material_stream(
+        "FEED",
+        config.c_to_k(float(feed_t_c)),
+        config.bar_to_kpa(float(pressure_bar)),
+        molar_flow,
+    )
+    driver.set_stream_composition("FEED", composition)
+    driver.solve_case()
+
+    set_name = "KinSet"
+    driver.create_reaction_set(set_name, set_type="Kinetic")
+    for index, reaction in enumerate(reactions, start=1):
+        reaction_name = str(reaction.get("name") or f"KinRxn-{index}")
+        kinetics = reaction.get("kinetics") or {}
+        driver.add_kinetic_reaction(
+            set_name,
+            reaction_name,
+            reaction.get("stoichiometry") or {},
+            kinetics.get("forward_orders") or {},
+            float(kinetics["activation_energy_kj_kgmole"]),
+            float(kinetics["frequency_factor_m3_kgmole_s"]),
+            reverse_orders=kinetics.get("reverse_orders") or {},
+            reverse_activation_energy=float(
+                kinetics.get("reverse_activation_energy_kj_kgmole", 0.0)
+            ),
+            reverse_frequency_factor=float(
+                kinetics.get("reverse_frequency_factor_m3_kgmole_s", 0.0)
+            ),
+            reaction_phase=int(kinetics.get("reaction_phase", 1)),
+        )
+    driver.associate_reaction_set(set_name)
+
+    if reactor_kind == "pfr":
+        driver.create_empty_material_stream("PRODUCT")
+        driver.create_energy_stream("Q-KIN")
+        driver.create_reactor("pfr", "R-PFR")
+        driver.connect_kinetic_reactor(
+            "R-PFR", ["FEED"],
+            product_name="PRODUCT",
+            reaction_set_name=set_name,
+            energy_stream_name="Q-KIN",
+            pressure_drop_kpa=float(spec.get("pressure_drop_kpa", 0.0)),
+            total_volume_m3=spec.get("total_volume_m3"),
+            tube_length_m=spec.get("tube_length_m"),
+            tube_diameter_m=spec.get("tube_diameter_m"),
+            heat_flow_kj_h=spec.get("heat_flow_kj_h"),
+        )
+    else:
+        driver.create_empty_material_stream("VAPOUR")
+        driver.create_empty_material_stream("LIQUID")
+        driver.create_energy_stream("Q-KIN")
+        driver.create_reactor("cstr", "R-CSTR")
+        driver.connect_kinetic_reactor(
+            "R-CSTR", ["FEED"],
+            vapour_product_name="VAPOUR",
+            liquid_product_name="LIQUID",
+            reaction_set_name=set_name,
+            energy_stream_name="Q-KIN",
+            pressure_drop_kpa=float(spec.get("pressure_drop_kpa", 0.0)),
+            volume_m3=spec.get("volume_m3"),
+            liquid_level_pct=spec.get("liquid_level_pct", 50.0),
+            heat_flow_kj_h=spec.get("heat_flow_kj_h"),
+        )
+
+    driver.solve_case()
+    feed = driver.read_stream_results("FEED")
+    results: dict[str, Any] = {}
+    if reactor_kind == "pfr":
+        product = driver.read_stream_results("PRODUCT")
+        results["product"] = product
+        solved = product.get("solved")
+    else:
+        vapour = driver.read_stream_results("VAPOUR")
+        liquid = driver.read_stream_results("LIQUID")
+        results["vapour_product"] = vapour
+        results["liquid_product"] = liquid
+        solved = vapour.get("solved") or liquid.get("solved")
+    if not solved:
+        raise RuntimeError(f"{reactor_kind.upper()} 产物未求解")
+    save_path = driver.save_case(
+        Path(config.OUTPUT_DIR) / f"kinetic_{reactor_kind}_case.hsc"
+    )
+    return {
+        "scenario": reactor_kind,
+        "case_name": case_name,
+        "reactor_type": reactor_kind,
+        "reason": plan.get("reason"),
+        "components": components,
+        "reactions": reactions,
+        "reactor_spec": spec,
+        "feed": feed,
+        "results": results,
+        "hsc_path": save_path,
+    }
+
+
 def run_equilibrium(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
     """
     通用 Equilibrium：按 plan.reactions 的化学计量和 EquilibriumConstant(Ka)

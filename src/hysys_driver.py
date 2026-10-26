@@ -816,6 +816,240 @@ class HYSYSDriver:
         )
         return reaction_name
 
+    def _set_typed_value(
+        self,
+        obj: Any,
+        attr: str,
+        value: float | tuple[float, ...],
+        units: Sequence[str] = (),
+        label: str = "",
+    ) -> None:
+        """
+        写一个可能是 ProcessVariable 或纯标量的属性：
+          1) 有 SetValue 的按单位依次尝试；
+          2) 否则直接 setattr（HYSYS 按当前 BasisUnits 解释，参考 Case 实测）。
+        失败抛 HYSYSDriverError。
+        """
+        label = label or attr
+        current = None
+        try:
+            current = getattr(obj, attr)
+        except Exception:
+            current = None
+        if current is not None and hasattr(current, "SetValue") and units:
+            for unit in units:
+                try:
+                    current.SetValue(value, unit)
+                    self.logger.info("%s = %r [%s]", label, value, unit)
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    self.logger.debug(
+                        "%s SetValue(%r, %r) 失败：%s",
+                        label, value, unit, _com_error_detail(exc),
+                    )
+        try:
+            setattr(obj, attr, value)
+            self.logger.info("%s = %r（直接赋值）", label, value)
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"设置 {label} = {value!r} 失败：{_com_error_detail(exc)}"
+            ) from exc
+
+    def add_kinetic_reaction(
+        self,
+        set_name: str,
+        reaction_name: str,
+        stoichiometry: Mapping[str, float],
+        forward_orders: Mapping[str, float],
+        activation_energy: float,
+        frequency_factor: float,
+        *,
+        reverse_orders: Mapping[str, float] | None = None,
+        reverse_activation_energy: float = 0.0,
+        reverse_frequency_factor: float = 0.0,
+        reaction_phase: int = 1,
+    ) -> str:
+        """
+        创建 kineticrxn 并加入反应集（全部按参考 Case 实测接口）：
+          Reactions.Add(name,"kineticrxn")
+          Reactants.Add(仅参与反应的组分)
+          ReactantStoichCoefValue / ComponentForwardOrderValue /
+          ComponentReverseOrderValue = tuple（按 Reactants 顺序）
+          ReactionPhase（1=气相）
+          先 ActiveReactions.Add 激活，再写 AE/FF（激活前 GET/PUT 失败）
+        AE 单位 kJ/kgmole；FF 单位 m3/kgmole-s（Basis=3, kgmole/m3）。
+        """
+        self._require_fluid_pkg()
+        rset = self._get_reaction_set(set_name)
+        component_names = self._fluid_package_component_names()
+        unknown = [key for key in stoichiometry if key not in component_names]
+        if unknown:
+            raise HYSYSDriverError(f"化学计量含流体包不存在的组分：{unknown}")
+        reactant_names = [
+            key for key in stoichiometry
+            if float(stoichiometry[key]) != 0.0
+        ]
+        if not reactant_names:
+            raise ValueError("化学计量没有非零组分")
+        ae = float(activation_energy)
+        ff = float(frequency_factor)
+        if not math.isfinite(ae) or ae < 0:
+            raise ValueError(f"活化能必须是非负有限数，收到 {activation_energy!r}")
+        if not math.isfinite(ff) or ff <= 0:
+            raise ValueError(f"频率因子必须是正有限数，收到 {frequency_factor!r}")
+
+        manager = self._case.BasisManager.ReactionPackageManager
+        try:
+            reaction = manager.Reactions.Add(reaction_name, "kineticrxn")
+            for component_name in reactant_names:
+                reaction.Reactants.Add(component_name)
+            reaction.ReactantStoichCoefValue = tuple(
+                float(stoichiometry[component_name])
+                for component_name in reactant_names
+            )
+            reaction.ComponentForwardOrderValue = tuple(
+                float(forward_orders.get(component_name, 0.0))
+                for component_name in reactant_names
+            )
+            reaction.ComponentReverseOrderValue = tuple(
+                float((reverse_orders or {}).get(component_name, 0.0))
+                for component_name in reactant_names
+            )
+            reaction.ReactionPhase = int(reaction_phase)
+            rset.ActiveReactions.Add(reaction)
+            self._set_typed_value(
+                reaction, "ForwardActivationEnergy", ae,
+                ("kJ/kgmole", "J/mol", "kJ/kmol"), "活化能",
+            )
+            self._set_typed_value(
+                reaction, "ForwardFrequencyFactor", ff,
+                ("m3/kgmole-s", "m3/kmol-s", "1/s"), "频率因子",
+            )
+            self._set_typed_value(
+                reaction, "ReverseActivationEnergy", float(reverse_activation_energy),
+                ("kJ/kgmole", "J/mol", "kJ/kmol"), "逆活化能",
+            )
+            self._set_typed_value(
+                reaction, "ReverseFrequencyFactor", float(reverse_frequency_factor),
+                ("m3/kgmole-s", "m3/kmol-s", "1/s"), "逆频率因子",
+            )
+        except HYSYSDriverError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"配置 kineticrxn {reaction_name!r} 失败：{_com_error_detail(exc)}"
+            ) from exc
+
+        self.logger.info(
+            "已添加 kineticrxn：%s（AE=%.4g kJ/kgmole, FF=%.4g, stoich=%s）",
+            reaction_name, ae, ff, stoichiometry,
+        )
+        return reaction_name
+
+    def connect_kinetic_reactor(
+        self,
+        reactor_name: str,
+        feed_stream_names: Sequence[str],
+        *,
+        product_name: str | None = None,
+        vapour_product_name: str | None = None,
+        liquid_product_name: str | None = None,
+        reaction_set_name: str | None = None,
+        energy_stream_name: str | None = None,
+        pressure_drop_kpa: float = 0.0,
+        total_volume_m3: float | None = None,
+        tube_length_m: float | None = None,
+        tube_diameter_m: float | None = None,
+        volume_m3: float | None = None,
+        liquid_level_pct: float | None = None,
+        heat_flow_kj_h: float | None = None,
+    ) -> dict[str, Any]:
+        """
+        连接 kinetic CSTR/PFR（参考 Case 实测）：
+          PFR:  Product / TotalVolumeValue / TubeLengthValue / TubeDiameterValue
+          CSTR: VapourProduct / LiquidProduct / VolumeValue / LiquidLevelValue
+        共用：Feeds.Add / EnergyStream / ReactionSet / PressureDropValue / HeatFlowValue。
+        """
+        self._require_case()
+        operation = self._get_operation(reactor_name)
+        if isinstance(feed_stream_names, str):
+            feed_names = [feed_stream_names]
+        else:
+            feed_names = [str(item).strip() for item in feed_stream_names]
+        if not feed_names:
+            raise ValueError("feed_stream_names 不能为空")
+        for feed_name in feed_names:
+            try:
+                operation.Feeds.Add(self._get_stream(feed_name))
+            except Exception as exc:  # noqa: BLE001
+                raise HYSYSDriverError(
+                    f"连接 {reactor_name!r} 进料 {feed_name!r} 失败："
+                    f"{_com_error_detail(exc)}"
+                ) from exc
+        if product_name:
+            try:
+                operation.Product = self._get_stream(product_name)
+            except Exception as exc:  # noqa: BLE001
+                raise HYSYSDriverError(
+                    f"连接 {reactor_name!r} Product 失败：{_com_error_detail(exc)}"
+                ) from exc
+        if vapour_product_name:
+            try:
+                operation.VapourProduct = self._get_stream(vapour_product_name)
+            except Exception as exc:  # noqa: BLE001
+                raise HYSYSDriverError(
+                    f"连接 {reactor_name!r} VapourProduct 失败：{_com_error_detail(exc)}"
+                ) from exc
+        if liquid_product_name:
+            try:
+                operation.LiquidProduct = self._get_stream(liquid_product_name)
+            except Exception as exc:  # noqa: BLE001
+                raise HYSYSDriverError(
+                    f"连接 {reactor_name!r} LiquidProduct 失败：{_com_error_detail(exc)}"
+                ) from exc
+        if energy_stream_name:
+            try:
+                operation.EnergyStream = self._get_energy_stream(energy_stream_name)
+            except Exception as exc:  # noqa: BLE001
+                raise HYSYSDriverError(
+                    f"连接 {reactor_name!r} EnergyStream 失败：{_com_error_detail(exc)}"
+                ) from exc
+        if reaction_set_name:
+            try:
+                operation.ReactionSet = self._get_reaction_set(reaction_set_name)
+            except Exception as exc:  # noqa: BLE001
+                raise HYSYSDriverError(
+                    f"绑定反应集 {reaction_set_name!r} 失败：{_com_error_detail(exc)}"
+                ) from exc
+        try:
+            operation.PressureDropValue = float(pressure_drop_kpa)
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"设置 {reactor_name!r} PressureDropValue 失败：{_com_error_detail(exc)}"
+            ) from exc
+        for attr, value, units in (
+            ("TotalVolumeValue", total_volume_m3, ("m3",)),
+            ("TubeLengthValue", tube_length_m, ("m",)),
+            ("TubeDiameterValue", tube_diameter_m, ("m",)),
+            ("VolumeValue", volume_m3, ("m3",)),
+            ("LiquidLevelValue", liquid_level_pct, ("%",)),
+            ("HeatFlowValue", heat_flow_kj_h, ("kJ/h",)),
+        ):
+            if value is not None:
+                self._set_typed_value(operation, attr, float(value), units)
+
+        result = {
+            "reactor": reactor_name,
+            "feeds": feed_names,
+            "product": product_name,
+            "vapour_product": vapour_product_name,
+            "liquid_product": liquid_product_name,
+            "reaction_set": reaction_set_name,
+            "energy_stream": energy_stream_name,
+        }
+        self.logger.info("kinetic 反应器连接完成：%s", result)
+        return result
+
     def connect_reactor(
         self,
         reactor_name: str,
