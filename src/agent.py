@@ -108,6 +108,46 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _check_plan_requirements(plan: dict) -> list[str]:
+    """运行前检查 plan 缺什么信息（考核要求：信息不足时应说明需补充的内容）。"""
+    missing: list[str] = []
+    reactor_type = str(plan.get("reactor_type", "")).lower()
+    if not plan.get("components"):
+        missing.append("components（进料组分）")
+    if not plan.get("feed_composition"):
+        missing.append("feed_composition（进料摩尔组成/摩尔比）")
+    if plan.get("feed_temperature_c") is None:
+        missing.append("feed_temperature_c（进料温度 ℃）")
+    if plan.get("pressure_bar") is None:
+        missing.append("pressure_bar（压力 bar）")
+    if reactor_type == "gibbs" and not plan.get("outlet_temperatures_c"):
+        missing.append("outlet_temperatures_c（目标出口温度 ℃，可多个）")
+    if reactor_type in ("conversion", "equilibrium") and not plan.get("reactions"):
+        missing.append("reactions（已配平的化学计量）")
+    if reactor_type in ("pfr", "cstr"):
+        if not plan.get("reactions"):
+            missing.append("reactions[].kinetics（活化能/频率因子/反应级数）")
+        else:
+            for index, reaction in enumerate(plan["reactions"], start=1):
+                kinetics = reaction.get("kinetics") or {}
+                if kinetics.get("activation_energy_kj_kgmole") is None:
+                    missing.append(
+                        f"reactions[{index}].kinetics.activation_energy_kj_kgmole"
+                    )
+                if kinetics.get("frequency_factor_m3_kgmole_s") is None:
+                    missing.append(
+                        f"reactions[{index}].kinetics.frequency_factor_m3_kgmole_s"
+                    )
+        spec = plan.get("reactor_spec") or {}
+        if reactor_type == "pfr" and spec.get("total_volume_m3") is None and (
+            spec.get("tube_length_m") is None or spec.get("tube_diameter_m") is None
+        ):
+            missing.append("reactor_spec（PFR 体积或管长+管径）")
+        if reactor_type == "cstr" and spec.get("volume_m3") is None:
+            missing.append("reactor_spec.volume_m3（CSTR 体积）")
+    return missing
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     plan_path = Path(args.plan)
     if not plan_path.is_absolute():
@@ -126,6 +166,18 @@ def _cmd_run(args: argparse.Namespace) -> int:
     print(f"反应器类型：{plan.get('reactor_type')}")
     print(f"选择理由：{plan.get('reason')}")
     print("=" * 72)
+
+    missing = _check_plan_requirements(plan)
+    if missing:
+        print("\n[信息不足] 该需求还缺少以下信息，请补充后重新生成 plan：")
+        for item in missing:
+            print(f"  - {item}")
+        notes = plan.get("notes") or []
+        if notes:
+            print("\n[建模假设] plan 中已记录的假设：")
+            for note in notes:
+                print(f"  - {note}")
+        return 2
 
     try:
         from hysys_driver import HYSYSDriver

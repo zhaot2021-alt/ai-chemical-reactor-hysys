@@ -76,11 +76,18 @@ def run_gibbs(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
 
     flow = plan.get("molar_flow_kmolh")
     if flow is None:
-        flow = DEFAULT_GIBBS_FLOW_KGMOLEH
-        logger.warning(
-            "plan 未给出摩尔流量，使用默认 %.1f kgmole/h（仅用于可运行测试）",
-            flow,
-        )
+        if plan.get("mass_flow_kg_h") is not None:
+            flow = _resolve_molar_flow(plan, composition)
+            logger.info(
+                "Gibbs 质量流量 %.4g kg/h → 摩尔流量 %.4g kmol/h",
+                float(plan["mass_flow_kg_h"]), flow,
+            )
+        else:
+            flow = DEFAULT_GIBBS_FLOW_KGMOLEH
+            logger.warning(
+                "plan 未给出摩尔流量，使用默认 %.1f kgmole/h（仅用于可运行测试）",
+                flow,
+            )
     flow = float(flow)
 
     case_name = driver.new_case(
@@ -508,9 +515,7 @@ def run_equilibrium(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
     if feed_t_c is None or pressure_bar is None:
         raise ValueError("Equilibrium plan 缺少 feed_temperature_c / pressure_bar")
     if molar_flow is None:
-        raise ValueError(
-            "Equilibrium plan 需要 molar_flow_kmolh（当前不猜质量流量换算）"
-        )
+        molar_flow = _resolve_molar_flow(plan, composition)
     molar_flow = float(molar_flow)
     if molar_flow <= 0:
         raise ValueError(f"摩尔流量必须为正，收到 {molar_flow!r}")
