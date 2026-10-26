@@ -1,6 +1,7 @@
 # HYSYS AI 反应器建模 — 阶段1 架构说明
 
-> 范围：**阶段1 仅打通** HYSYS 连接 → 新建 Case → 流体包（Peng-Robinson）→ 10 个标准组分 → FEED 物流 → 保存 `.hsc` → COM 释放。
+> 状态：**阶段1 已于 2026-10-26 在 Aspen HYSYS V15 远程工作站验收通过**。
+> 范围：HYSYS 连接 → 新建 Case → 流体包（Peng-Robinson）→ 10 个标准组分 → FEED 物流 → 保存 `.hsc` → COM 释放。
 > **本阶段不创建任何反应器**（Conversion / Equilibrium / Gibbs 留到阶段2），也不设置物流组成、不求解。
 
 ---
@@ -226,7 +227,6 @@ HYSYSDriver（仅远程）
 |---|---|---|
 | `SimulationCases.Add(name)` 的参数签名 | 先试带名，再回退无参 `Add()` | 【需要在Excel VBA Object Browser核对】 |
 | `FluidPackage.Name` 是否可写（流体包改名） | **不再使用**：改用官方示例 `FluidPackages.Add(name)` 创建时命名；回退 `Add()` 时才可能得到 `Basis-1` | 已由 Add(name) 替代 |
-| `PropertyPackageName = "pengrob"` 的写入 | 依据手动 PR Case 的 `PropertyPackage.TypeName='pengrob'` + SRK Setter 成功；驱动采用该 token，**待远程复测 PR** | 【需要在Excel VBA Object Browser核对】 |
 | `SimulationCase.Close(False)` 参数签名 | 失败回退 `Close()`；正常流程先 `SaveAs`，避免弹保存框 | 【需要在Excel VBA Object Browser核对】 |
 | `Flowsheet.FluidPackage = fp`（Make Current） | **未实现**：公开资料显示该属性主要用于读取；阶段1只有一个流体包，HYSYS 自动关联 | 待确认后再扩展 |
 | `Components.Add("H2O")` 对水的接受度 | 标准 ID 用 `H2O`；失败时尝试官方同义名 `Water` 并告警 | 回退策略，不改变标准 ID |
@@ -365,7 +365,7 @@ python src\main.py --text "进料为甲烷和水蒸气，温度 520℃，压力 
 python src\test_stage1.py --no-visible --log-level DEBUG
 ```
 
-真实联调成功标准：
+真实联调成功标准（2026-10-26 已全部满足）：
 
 1. HYSYS 弹出/连接成功，生成 Case；
 2. 流体包创建，物性包为 Peng-Robinson；
@@ -373,6 +373,19 @@ python src\test_stage1.py --no-visible --log-level DEBUG
 4. `FEED` 物流的 T/P/F 读回与输入一致（298.15 K / 100 kPa / 100 kgmole/h 的测试值）；
 5. `output\*.hsc` 存在；
 6. 本次启动的 HYSYS 进程退出，`tasklist` 无残留（附着已有实例时进程保留是预期行为）。
+
+本次验收实际值：
+
+| 项目 | 结果 |
+|---|---|
+| HYSYS / Python | HYSYS V15 / Python 3.12.4 x64 / pywin32 311 |
+| Case | `ChemAI_Stage1_20261025_235816` |
+| 流体包 | `PR_FluidPkg` |
+| 物性包 | Setter token `pengrob` → 读回 `Peng-Robinson` |
+| 组分 | Methane / H2O / CO / CO2 / Hydrogen / Toluene / Benzene / o-Xylene / m-Xylene / p-Xylene |
+| FEED | 298.15 K / 100 kPa / 100 kgmole/h |
+| `.hsc` | `output\ChemAI_Stage1_20261025_235816.hsc`（160,165 字节） |
+| 进程 | 脚本启动的 HYSYS 已 `Quit`，无后台残留 |
 
 ---
 
@@ -384,22 +397,31 @@ python src\test_stage1.py --no-visible --log-level DEBUG
 - 公斤/小时流量未换算；
 - 流体包名称通过 `FluidPackages.Add(name)` 创建时指定；回退 `Add()` 时可能为 `Basis-1`；
 - 仅支持单一流体包；多流体包 Make Current 待核对；
-- `PropertyPackageName = "pengrob"` 正在做最终远程复测（依据手动 PR Case 的 `TypeName`）；
-- HYSYS COM 部分接口签名需在 V15 Object Browser 核对（见 ⑤）。
+- `PropertyPackageName = "pengrob"` 已在 V15 远程实测通过；
+- HYSYS COM 部分接口签名仍需在 V15 Object Browser 核对（见 ⑤）。
 
 ---
 
 ## ⑫ 远程联调记录（2026-10-26）
 
-已在远程 HYSYS V15 工作站（Python 3.12.4 64 位、pywin32 311）完成：
+**最终状态：验收通过。** 在远程 HYSYS V15 工作站（Python 3.12.4 64 位、
+pywin32 311）上，以提交 `4498f3e` 成功完成：
 
-1. 本地/远程 dry-run 通过（10 标准组分、单位换算正确）；
-2. COM 连接、`SimulationCases.Add`、`FluidPackages.Add`、`FluidPackage.Name` 成功；
-3. 在 `PropertyPackageName = "PengRobinson"/"Peng-Robinson"` 处返回
-   `HRESULT=0x80020009`、`excepinfo scode=0x80070057 (E_INVALIDARG)`，
-   随后 `EndBasisChange` 返回 `E_FAIL`。
+```text
+脚本启动 HYSYS
+  → SimulationCases.Add(ChemAI_Stage1_20261025_235816)
+  → FluidPackages.Add("PR_FluidPkg")
+  → PropertyPackageName = "pengrob"  → 读回 "Peng-Robinson"
+  → Components.Add(10 个标准组分)
+  → EndBasisChange OK
+  → MaterialStreams.Add("FEED") / SetValue(298.15 K, 100 kPa, 100 kgmole/h)
+  → SaveAs(output/*.hsc, 160,165 bytes)
+  → Close Case → Application.Quit() → tasklist 无 hysys.exe 残留
+```
 
-远程 `ITypeInfo` 与探针结果：
+完整验收表见 ⑩；以下保留问题定位过程，便于答辩说明探索路径。
+
+### 问题定位过程
 
 ```text
 FluidPackages.Add                 FUNC   params=['name', 'Type']
@@ -449,8 +471,9 @@ EndBasisChange
 - `tools/probe_hysys_property_package.py` v2：类型库成员、`Add(name)`、带组分顺序矩阵、`pengrob` 候选；
 - 报告：`output/probe_hysys_property_package_report.txt`。
 
-> 状态：驱动修复已通过本地假 COM 顺序测试；**`pengrob` 的远程写入仍需最终复测**。
-> 若复测失败，以探针 H/I（`pengrob` 两种顺序）结果为准。
+> 状态：**2026-10-26 远程复测通过**。`pengrob` 写入成功，读回
+> `Peng-Robinson`；10 个组分与 FEED 均正常；`hysys.exe` 正常退出、无残留。
+> 阶段1到此定版，后续阶段从“物流组成 + 求解”开始。
 
 ---
 
