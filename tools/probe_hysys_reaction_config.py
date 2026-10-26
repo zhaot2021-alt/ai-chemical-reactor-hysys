@@ -118,11 +118,21 @@ def describe_rxn(rxn, label: str) -> None:
     safe(rxn, "VisibleTypeName", label)
     dump_members(rxn, label, filters=None)
     for attr in (
-        "BaseComponent", "Components", "Reactants", "Products",
+        "BaseComponent", "Components", "Products",
         "ConversionCoefficients", "ConversionCoefficientsValue",
         "StoichiometricCoefficients", "ConversionValue",
+        "ReactionPhase",
     ):
         safe(rxn, attr, label)
+    reactants = safe(rxn, "Reactants", label)
+    if reactants is not None:
+        dump_members(reactants, f"{label}.Reactants", filters=None)
+        rx_items = items(reactants)
+        report(f"  {label}.Reactants count={len(rx_items)}")
+        for j, reactant in enumerate(rx_items):
+            safe(reactant, "Name", f"{label}.Reactant[{j}]")
+            safe(reactant, "ReactantName", f"{label}.Reactant[{j}]")
+            safe(reactant, "ReactantStoichCoefValue", f"{label}.Reactant[{j}]")
 
 
 def inspect_template(app) -> None:
@@ -206,7 +216,7 @@ def create_test(app) -> None:
 
         rxn = None
         if reactions is not None:
-            for rxn_type in ("Conversion", "conversion", "ConversionReaction"):
+            for rxn_type in ("conversionrxn", "Conversion", "conversion", "ConversionReaction"):
                 for args in (("Probe_Rxn", rxn_type), (rxn_type, "Probe_Rxn"), ("Probe_Rxn",)):
                     try:
                         rxn = reactions.Add(*args)
@@ -216,10 +226,34 @@ def create_test(app) -> None:
                         report(f"Reactions.Add{args} failed: {com_detail(exc)}")
                 if rxn is not None:
                     break
+        if rxn is None and rset is not None:
+            try:
+                active = rset.ActiveReactions
+                rxn = active.Add("Probe_Rxn_Active", "conversionrxn")
+                report(f"ActiveReactions.Add('conversionrxn') OK -> {rxn!r}")
+            except Exception as exc:  # noqa: BLE001
+                report(f"ActiveReactions.Add('conversionrxn') failed: {com_detail(exc)}")
+
         if rxn is not None:
             describe_rxn(rxn, "NEW Reaction")
+            try:
+                rx = rxn.Reactants
+                dump_members(rx, "NEW Reaction.Reactants", filters=None)
+                for name in ("Toluene", "Benzene", "p-Xylene"):
+                    try:
+                        item = rx.Add(name)
+                        report(f"Reactants.Add({name!r}) OK -> {item!r}")
+                    except Exception as exc:  # noqa: BLE001
+                        report(f"Reactants.Add({name!r}) failed: {com_detail(exc)}")
+            except Exception as exc:  # noqa: BLE001
+                report(f"NEW Reactants handling failed: {com_detail(exc)}")
 
         if rset is not None:
+            try:
+                rset.AssociateFluidPackage(fp)
+                report("ReactionSet.AssociateFluidPackage(fp) OK")
+            except Exception as exc:  # noqa: BLE001
+                report(f"AssociateFluidPackage failed: {com_detail(exc)}")
             for coll_attr in ("ActiveReactions", "InactiveReactions"):
                 coll = safe(rset, coll_attr, "Probe_Set")
                 if coll is not None:
