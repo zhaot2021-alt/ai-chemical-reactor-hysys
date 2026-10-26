@@ -35,6 +35,8 @@ LIQUID_STREAM = "Liq1"
 FEED_T_K = 653.15            # 380℃
 FEED_P_KPA = 2500.0          # 2.5 MPa
 FEED_MASS_KG_H = 10000.0
+TOLUENE_MW_KG_KMOL = 92.1402  # 纯甲苯进料，kg/h -> kmol/h
+FEED_MOLAR_KMOLH = FEED_MASS_KG_H / TOLUENE_MW_KG_KMOL
 FEED_COMPOSITION = {"Toluene": 1.0}
 
 
@@ -89,11 +91,12 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("模板物流：%s", driver.list_streams())
         logger.info("模板操作：%s", driver.list_operations())
 
+        # 模板的流量规格是 MolarFlow；MassFlow.SetValue 在 V15 返回 E_ACCESSDENIED。
         driver.set_stream_conditions(
             FEED_STREAM,
             temperature_k=FEED_T_K,
             pressure_kpa=FEED_P_KPA,
-            mass_flow_kg_h=FEED_MASS_KG_H,
+            molar_flow_kgmoleh=FEED_MOLAR_KMOLH,
         )
         driver.set_stream_composition(FEED_STREAM, FEED_COMPOSITION)
         driver.solve_case()
