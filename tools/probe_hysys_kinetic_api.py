@@ -114,11 +114,11 @@ def _type_doc(lib: Any, index: int) -> tuple[str, str]:
         return "", ""
 
 
-def _containing_type_lib(app: Any) -> tuple[Any, str] | None:
+def _containing_type_lib(app: Any) -> tuple[str, Any] | None:
     try:
         type_info = app._oleobj_.GetTypeInfo()
         lib, _index = type_info.GetContainingTypeLib()
-        return lib, "Application containing type library"
+        return "Application containing type library", lib
     except Exception as exc:  # noqa: BLE001
         report(f"  containing type library failed: {com_detail(exc)}")
         return None
