@@ -565,6 +565,105 @@ class HYSYSDriver:
         )
         return operation_name
 
+    def create_empty_material_stream(self, name: str) -> str:
+        """创建不预设 T/P/F 的物料流（用于反应器产物出口）。"""
+        self._require_case()
+        stream_name = str(name).strip()
+        if not stream_name:
+            raise ValueError("物流名称不能为空")
+        if stream_name in self._streams:
+            raise HYSYSDriverError(f"物流 {stream_name!r} 已存在")
+        try:
+            stream = self._case.Flowsheet.MaterialStreams.Add(stream_name)
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"创建空物料流 {stream_name!r} 失败：{_com_error_detail(exc)}"
+            ) from exc
+        self._streams[stream_name] = stream
+        self.logger.info("已创建空物料流：%s", stream_name)
+        return stream_name
+
+    def connect_reactor(
+        self,
+        reactor_name: str,
+        feed_stream_names: Sequence[str],
+        vapour_product_name: str,
+        liquid_product_name: str,
+        *,
+        pressure_drop_kpa: float = 0.0,
+        reaction_set_name: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        按 V15 参考 Case 已印证的方式连接反应器：
+          reactor.Feeds.Add(feed_stream)
+          reactor.VapourProduct = vapour_stream   # PUT
+          reactor.LiquidProduct = liquid_stream   # PUT
+          reactor.PressureDropValue = pressure_drop_kpa  # PUT
+          reactor.ReactionSet = reaction_set      # PUT（可选）
+
+        不设置温度/工况参数；等反应器 setpoint 成员确认后再加。
+        """
+        self._require_case()
+        operation = self._get_operation(reactor_name)
+
+        if isinstance(feed_stream_names, str):
+            feed_names = [feed_stream_names]
+        else:
+            feed_names = [str(item).strip() for item in feed_stream_names]
+        if not feed_names:
+            raise ValueError("feed_stream_names 不能为空")
+
+        for feed_name in feed_names:
+            feed = self._get_stream(feed_name)
+            try:
+                operation.Feeds.Add(feed)
+            except Exception as exc:  # noqa: BLE001
+                raise HYSYSDriverError(
+                    f"连接反应器 {reactor_name!r} 进料 {feed_name!r} 失败："
+                    f"{_com_error_detail(exc)}"
+                ) from exc
+
+        vapour = self._get_stream(vapour_product_name)
+        liquid = self._get_stream(liquid_product_name)
+        try:
+            operation.VapourProduct = vapour
+            operation.LiquidProduct = liquid
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"连接反应器 {reactor_name!r} 产物失败："
+                f"{_com_error_detail(exc)}"
+            ) from exc
+
+        try:
+            operation.PressureDropValue = float(pressure_drop_kpa)
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"设置反应器 {reactor_name!r} PressureDropValue 失败："
+                f"{_com_error_detail(exc)}"
+            ) from exc
+
+        if reaction_set_name:
+            try:
+                reaction_sets = self._case.BasisManager.ReactionPackageManager.ReactionSets
+                reaction_set = reaction_sets.Item(reaction_set_name)
+                operation.ReactionSet = reaction_set
+            except Exception as exc:  # noqa: BLE001
+                raise HYSYSDriverError(
+                    f"绑定反应集 {reaction_set_name!r} 失败："
+                    f"{_com_error_detail(exc)}"
+                ) from exc
+
+        result = {
+            "reactor": reactor_name,
+            "feeds": feed_names,
+            "vapour_product": vapour_product_name,
+            "liquid_product": liquid_product_name,
+            "pressure_drop_kpa": float(pressure_drop_kpa),
+            "reaction_set": reaction_set_name,
+        }
+        self.logger.info("反应器连接完成：%s", result)
+        return result
+
     def create_fluid_package(
         self,
         name: str | None = None,
@@ -1092,6 +1191,19 @@ class HYSYSDriver:
         values["vapour_fraction"] = vapour_fraction
         values["solved"] = composition is not None and vapour_fraction is not None
         return values
+
+    def _get_operation(self, name: str) -> Any:
+        """按名称获取当前 Case 的单元操作对象（不暴露给上层）。"""
+        self._require_case()
+        try:
+            operation = self._case.Flowsheet.Operations.Item(name)
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"单元操作 {name!r} 不存在：{_com_error_detail(exc)}"
+            ) from exc
+        if operation is None:
+            raise HYSYSDriverError(f"单元操作 {name!r} 返回空对象")
+        return operation
 
     def _get_stream(self, name: str) -> Any:
         """返回当前 Case 的物流对象；模板物流按名称懒绑定。"""
