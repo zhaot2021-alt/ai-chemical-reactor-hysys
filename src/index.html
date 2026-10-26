@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 化工反应器建模</title>
+<style>
+  body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0;
+         background: #f5f7fa; color: #1f2937; }
+  header { background: #0f766e; color: #fff; padding: 14px 24px;
+           font-size: 18px; font-weight: 600; }
+  main { max-width: 900px; margin: 24px auto; padding: 0 16px; }
+  textarea { width: 100%; height: 90px; padding: 12px; font-size: 14px;
+             border: 1px solid #cbd5e1; border-radius: 8px; resize: vertical;
+             box-sizing: border-box; }
+  button { margin: 10px 10px 0 0; padding: 10px 22px; border: 0; border-radius: 8px;
+           font-size: 14px; cursor: pointer; background: #0f766e; color: #fff; }
+  button.secondary { background: #64748b; }
+  button:disabled { opacity: .5; cursor: wait; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+          padding: 16px; margin-top: 16px; }
+  .badge { display: inline-block; background: #0f766e; color: #fff; border-radius: 999px;
+           padding: 2px 12px; font-size: 13px; margin-right: 8px; }
+  .badge.warn { background: #b45309; }
+  .muted { color: #64748b; font-size: 13px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 8px; }
+  th, td { border: 1px solid #e2e8f0; padding: 6px 8px; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  th { background: #f1f5f9; }
+  .error { color: #b91c1c; }
+  .ok { color: #15803d; }
+  h3 { margin: 12px 0 6px; font-size: 15px; }
+  li { font-size: 13px; margin: 2px 0; }
+</style>
+</head>
+<body>
+<header>AI 化工反应器建模 — Aspen HYSYS V15 智能体</header>
+<main>
+  <textarea id="text" placeholder="用自然语言描述反应过程，例如：&#10;CO2 和 H2 以 1:1 摩尔比进料，500 K、10 bar，反应 CO2+H2→CO+H2O，活化能 50000 kJ/kgmole，指前因子 1000 m3/kmol-s，气相，反应器体积 1 m3">CO2 和 H2 以 1:1 摩尔比进料，500 K、10 bar，用 PFR 反应 CO2+H2→CO+H2O，活化能 50000 kJ/kgmole，指前因子 1000 m3/kmol-s，反应器体积 1 m3</textarea>
+  <button id="btnPlan">1. 生成建模方案（AI 选型）</button>
+  <button id="btnRun" class="secondary" disabled>2. 在 HYSYS 中执行</button>
+
+  <div id="planBox" class="card" style="display:none"></div>
+  <div id="resultBox" class="card" style="display:none"></div>
+</main>
+
+<script>
+let currentPlan = null;
+const $ = id => document.getElementById(id);
+
+async function post(url, body) {
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return resp.json();
+}
+
+function esc(s) { const d = document.createElement("div");
+  d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+
+function planHtml(r) {
+  const p = r.plan;
+  const typeMap = { gibbs: "Gibbs 反应器", conversion: "转化率反应器",
+    equilibrium: "平衡反应器", pfr: "平推流 PFR", cstr: "全混流 CSTR" };
+  let h = `<span class="badge">${esc(typeMap[p.reactor_type] || p.reactor_type)}</span>`;
+  h += `<b>选择理由：</b>${esc(p.reason)}<br>`;
+  h += `<span class="muted">组分：${esc((p.components || []).join(" / "))}<br>`
+     + `进料：${esc(p.feed_temperature_c ?? "?")}℃ · ${esc(p.pressure_bar ?? "?")} bar`
+     + ` · ${esc(p.molar_flow_kmolh ?? p.mass_flow_kg_h ?? "?")}${p.molar_flow_kmolh ? " kmol/h" : " kg/h"}</span>`;
+  const notes = r.notes || [];
+  if (notes.length) h += `<h3>建模假设</h3><ul>${notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul>`;
+  if (r.missing && r.missing.length) {
+    h += `<h3 class="warn">⚠ 信息不足，需补充</h3><ul>${r.missing.map(m => `<li class="error">${esc(m)}</li>`).join("")}</ul>`;
+  }
+  return h;
+}
+
+function streamHtml(s) {
+  if (!s || !s.mole_fractions) return "";
+  const frac = Object.entries(s.mole_fractions).filter(([, v]) => v > 0.0005);
+  let h = `<h3>物流 ${esc(s.name)} <span class="muted">`
+    + `T=${s.temperature_k == null ? "?" : (s.temperature_k - 273.15).toFixed(1)}℃ · `
+    + `P=${s.pressure_kpa == null ? "?" : (s.pressure_kpa / 100).toFixed(2)} bar · `
+    + `F=${s.molar_flow_kgmoleh == null ? "?" : s.molar_flow_kgmoleh.toFixed(2)} kmol/h</span></h3>`;
+  h += `<table><tr><th>组分</th><th>摩尔分数</th></tr>`;
+  for (const [c, v] of frac) h += `<tr><td>${esc(c)}</td><td>${(v * 100).toFixed(2)}%</td></tr>`;
+  return h + "</table>";
+}
+
+function collectStreams(obj, out) {
+  if (!obj || typeof obj !== "object") return;
+  if (obj.name && obj.mole_fractions) out.push(obj);
+  for (const v of Object.values(obj)) collectStreams(v, out);
+}
+
+function resultHtml(s) {
+  const streams = [];
+  collectStreams(s, streams);
+  let h = `<span class="ok">✓ 执行成功（HYSYS 真实求解）</span>`;
+  if (s.scenario === "gibbs") {
+    for (const [label, item] of Object.entries(s.results || {})) {
+      h += `<h3>工况 ${esc(label)}（能量流 duty ${Number(item.energy_stream_duty_kj_h / 1e6).toFixed(2)} ×10⁶ kJ/h）</h3>`;
+      h += streamHtml(item.vapour) + streamHtml(item.liquid);
+    }
+  } else if (s.actual_conversion_percent != null) {
+    h += `　实际转化率：<b>${s.actual_conversion_percent.toFixed(2)}%</b>`;
+  }
+  for (const st of streams) h += streamHtml(st);
+  h += `<div class="muted" style="margin-top:8px">Case 已保存：${esc(s.hsc_path)}</div>`;
+  return h;
+}
+
+$("btnPlan").onclick = async () => {
+  $("btnPlan").disabled = true;
+  $("planBox").style.display = "block";
+  $("planBox").innerHTML = `<span class="muted">AI 正在选择反应器类型并生成建模方案…</span>`;
+  $("resultBox").style.display = "none";
+  try {
+    const r = await post("/api/plan", { text: $("text").value });
+    if (!r.ok) { $("planBox").innerHTML = `<span class="error">✗ ${esc(r.error)}</span>`; return; }
+    currentPlan = r.plan;
+    $("planBox").innerHTML = planHtml(r);
+    $("btnRun").disabled = false;
+  } finally { $("btnPlan").disabled = false; }
+};
+
+$("btnRun").onclick = async () => {
+  if (!currentPlan) return;
+  $("btnRun").disabled = true;
+  $("resultBox").style.display = "block";
+  $("resultBox").innerHTML = `<span class="muted">HYSYS 建模求解中（约 10-60 秒），窗口会弹出 HYSYS 界面…</span>`;
+  try {
+    const r = await post("/api/run", { plan: currentPlan });
+    if (!r.ok) { $("resultBox").innerHTML = `<span class="error">✗ ${esc(r.error)}</span>`; return; }
+    $("resultBox").innerHTML = resultHtml(r.summary);
+  } finally { $("btnRun").disabled = false; }
+};
+</script>
+</body>
+</html>
