@@ -1,8 +1,8 @@
-# HYSYS AI 反应器建模 — 阶段1 架构说明
+# HYSYS AI 反应器建模 — 阶段1 / 2A 架构说明
 
-> 状态：**阶段1 已于 2026-10-26 在 Aspen HYSYS V15 远程工作站验收通过**。
-> 范围：HYSYS 连接 → 新建 Case → 流体包（Peng-Robinson）→ 10 个标准组分 → FEED 物流 → 保存 `.hsc` → COM 释放。
-> **本阶段不创建任何反应器**（Conversion / Equilibrium / Gibbs 留到阶段2），也不设置物流组成、不求解。
+> 状态：**阶段1 与阶段2A 已于 2026-10-26 在 Aspen HYSYS V15 远程工作站验收通过**。
+> 范围：HYSYS 连接 → Case → PR 流体包 → 10 个标准组分 → FEED → 组成写入 → Solver → 结果读回 → `.hsc` → COM 释放。
+> **尚未创建任何反应器**（Conversion / Equilibrium / Gibbs 留到阶段2B）。
 
 ---
 
@@ -75,7 +75,7 @@
 
 ### 2.2 `src/nlp_parser.py` — 自然语言解析层
 
-阶段1为**正则规则占位**；阶段2可替换为 LLM，但保持输出 schema 不变。
+阶段1/2A为**正则规则占位**；后续可替换为 LLM，但保持输出 schema 不变。
 
 | 对外接口 | 说明 |
 |---|---|
@@ -86,25 +86,27 @@
 | 字段 | 类型 | 单位 / 取值 |
 |---|---|---|
 | `components` | `list[str]` | HYSYS 标准 ID，按文中出现顺序去重 |
+| `composition` | `dict[str, float] \| None` | 摩尔分数；阶段2A支持单组分/等摩尔占位 |
 | `temperature_c` | `float \| None` | **℃**（外部标准） |
 | `pressure_bar` | `float \| None` | **bar**（MPa/kPa/atm 已换算） |
 | `molar_flow_kmolh` | `float \| None` | **kmol·h⁻¹** |
-| `reactor_type_hint` | `str \| None` | 仅提示，**阶段1不消费** |
+| `reactor_type_hint` | `str \| None` | 规则提示，阶段2B再消费 |
 | `reactor_reason` | `str \| None` | 提示理由 |
-| `missing_info` | `list[str]` | 缺失字段名，如 `molar_flow_kmolh` |
+| `missing_info` | `list[str]` | 缺失字段名，如 `composition` |
 | `notes` | `list[str]` | 歧义、单位未支持、多值等提醒 |
-| `parser` | `str` | 当前为 `rule_placeholder_v1` |
+| `parser` | `str` | 当前为 `rule_placeholder_v2` |
 
 已知限制：
 
-- 多个温度/压力时取**第一个**，并写入 `notes`。场景1同时有“进料 520℃ / 出口 710℃”时必须由阶段2 LLM 做语义区分。
+- 多个温度/压力时取**第一个**，并写入 `notes`。场景1同时有“进料 520℃ / 出口 710℃”时必须由 LLM 做语义区分。
+- 组成规则目前只支持“单一组分 → 纯组分”和“各组分等摩尔”；明确百分比/摩尔比留给 LLM。
 - 质量流量（kg/h）暂不换算为摩尔流量（需分子量/组成），只提示。
 - 通用“二甲苯”有歧义，不擅自映射为某一异构体，写入 `notes`。
 - 不支持表压（barg）、N m³/h 等；需要时在 `config` 增加换算后再扩展解析。
 
 ### 2.3 `src/hysys_driver.py` — COM 驱动层
 
-只封装与 HYSYS 的基础交互；**无 RAG、无 LLM、无反应器类型判断、无反应器创建**。
+只封装与 HYSYS 的基础交互；**无 RAG、无 LLM、无反应器类型判断、无反应器创建**（阶段2B再扩展）。
 
 | 公开成员 | 签名 / 返回值 | 说明 |
 |---|---|---|
@@ -115,6 +117,9 @@
 | `create_fluid_package(name=None, property_package=None, components=None)` | `str` | 创建流体包 + 设置物性包 + **在同一 Basis 内加组分** |
 | `add_components(ids)` | `tuple[str, ...]` | 后续追加标准组分，重复自动跳过 |
 | `create_material_stream(name, T_K, P_kPa, F_kgmole/h)` | `dict` | 建物流并设置内部单位参数，返回安全状态字典 |
+| `set_stream_composition(name, mole_fractions)` | `dict` | 按实际组分顺序写入组成、归一化、读回校验 |
+| `solve_case()` | `None` | `Solver.CanSolve=True` 并等待 `IsSolving=False` |
+| `read_stream_results(name)` | `dict` | 读回 T/P/F、组成、汽化率、`solved`，**不暴露 COM** |
 | `read_stream_values(name)` | `dict` | 只读温度/压力/摩尔流量，**不暴露 COM** |
 | `save_case(path=None)` | `str` | 保存 `.hsc`，返回绝对路径 |
 | `is_connected` / `case_name` / `fluid_package_name` / `property_package_name` / `component_ids` / `stream_names` | 只读属性 | 仅供调度层展示 |
@@ -135,7 +140,7 @@ with HYSYSDriver(visible=True) as drv:
 
 | 对外接口 | 说明 |
 |---|---|
-| `run_stage1(text, *, case_name, save_path, visible, strict, dry_run) -> dict` | 阶段1完整链路；`dry_run=True` 不连接 HYSYS |
+| `run_stage1(text, *, case_name, save_path, visible, strict, dry_run) -> dict` | 阶段1/2A完整链路；有组成时自动求解；`dry_run=True` 不连接 HYSYS |
 | `main(argv=None) -> int` | CLI，返回进程退出码 |
 | `Stage1Error` | 参数缺失 / 校验失败 / 驱动不可用 |
 
@@ -144,17 +149,21 @@ with HYSYSDriver(visible=True) as drv:
 1. 调 `nlp_parser.parse()`；
 2. 校验缺失参数：`--strict` 报错，否则使用 `config` 默认值并告警；
 3. 用 `config` 的函数把 **℃/bar/kmol·h⁻¹ → K/kPa/kgmole·h⁻¹**；
-4. 在 `try/finally` 中调用驱动，**无论如何都 `shutdown()`**；
-5. 返回可序列化摘要（供 CLI、测试、后续 Web 层使用）。
+4. 有 `composition` 时调用 `set_stream_composition → solve_case → read_stream_results`；
+5. 在 `try/finally` 中调用驱动，**无论如何都 `shutdown()`**；
+6. 返回可序列化摘要（供 CLI、测试、后续 Web 层使用）。
 
 不在此层写：COM 调用、解析正则、反应器创建。
 
-### 2.5 `src/test_stage1.py` — 联调测试入口
+### 2.5 联调测试入口
 
-固定测试文本覆盖 10 个组分与三个工艺参数；先本地校验解析结果，再调用 `main.run_stage1()`：
+- `src/test_stage1.py`：阶段1连通模式，固定文本**不含组成**，验证 Case/流体包/组分/FEED/`.hsc`；
+- `src/test_stage2.py`：阶段2A，固定文本含“各组分等摩尔”，验证组成写入 / 求解 / T/P/F/汽化率读回。
+
+两者均支持：
 
 - `--dry-run`：本地执行，不导入驱动层；
-- 不带 `--dry-run`：远程工作站真实建 Case / 流体包 / 组分 / FEED / `.hsc`。
+- 不带 `--dry-run`：远程工作站真实联调。
 
 ---
 
@@ -180,6 +189,10 @@ HYSYSDriver（仅远程）
   │                        components=[...10 个标准 ID...])
   │    └─ 同一个 Basis：Add(name) → 设 PP → 加组分 → End
   ├─ create_material_stream("FEED", T_K, P_kPa, F)
+  ├─ if composition:
+  │    ├─ set_stream_composition("FEED", {...})
+  │    ├─ solve_case()
+  │    └─ read_stream_results("FEED")
   ├─ save_case("output/xxx.hsc")
   └─ shutdown()  ← finally 保证执行
   │
@@ -199,6 +212,8 @@ HYSYSDriver（仅远程）
 | HYSYS | K、kPa、kgmole·h⁻¹ | `GetValue` 读回验证 |
 
 > HYSYS 的 **kgmole ≡ kmol**（1 kgmole = 1000 mol），数值相同，但代码里用显式函数表达语义，避免单位歧义。
+> 注意：V15 的原始 `*Value` 属性使用 HYSYS 默认单位（如 `MolarFlowValue` 是 kgmole/s），
+> 上层不得直接使用；必须通过 `GetValue/SetValue` 指定单位。
 
 ---
 
@@ -218,6 +233,10 @@ HYSYSDriver（仅远程）
 | `FluidPackage.Components.Add("Methane")` | 添加标准组分 |
 | `Flowsheet.MaterialStreams.Add("FEED")` | 新建物流（VBA 公开示例） |
 | `Stream.Temperature/Pressure/MolarFlow.SetValue(value, unit)` / `.GetValue(unit)` | 带单位读写 |
+| `ProcessStream.ComponentMolarFractionValue` | V15 GET + PUT；组成数组顺序与流体包 Components 一致，直接传 `tuple` 成功 |
+| `ProcessStream.ComponentMolarFraction.Calculate/Values` | 组成写入的备用方式（探针实测可用） |
+| `ProcessStream.VapourFractionValue` | 汽化率；V15 流股无 `State` 属性 |
+| `SimulationCase.Solver.CanSolve` / `Solver.IsSolving` | 求解开关 / 求解中标志；V15 无 `Run()` |
 | `SimulationCase.SaveAs(path)` | 保存 `.hsc` |
 | `Application.Quit()` | 退出 HYSYS |
 
@@ -307,7 +326,7 @@ main.run_stage1()
 4. **新增评估/报表**：作为独立模块消费驱动层返回的安全字典，不访问 COM；
 5. **反应器规则**：规则文本/关键词仍放 `config`，判断逻辑放 parser / LLM。
 
-> 阶段1**没有**任何 Conversion / Equilibrium / Gibbs 创建代码；上述仅为架构预留说明。
+> 阶段1/2A**没有**任何 Conversion / Equilibrium / Gibbs 创建代码；上述仅为阶段2B的架构预留说明。
 
 ---
 
@@ -354,15 +373,20 @@ python src\nlp_parser.py
 :: 本地：端到端 dry-run（不连接 HYSYS）
 python src\test_stage1.py --dry-run
 
+:: 本地：阶段2A dry-run（含等摩尔组成）
+python src\test_stage2.py --dry-run
+
 :: 本地：CLI dry-run
-python src\main.py --dry-run --text "进料为甲烷和水蒸气，温度 520℃，压力 1 bar，摩尔流量 100 kmol/h"
+python src\main.py --dry-run --text "进料为甲烷和水蒸气，各组分等摩尔，温度 520℃，压力 1 bar，摩尔流量 100 kmol/h"
 
 :: 远程工作站：真实联调
 python src\test_stage1.py --no-visible
-python src\main.py --text "进料为甲烷和水蒸气，温度 520℃，压力 1 bar，摩尔流量 100 kmol/h" --save output\case.hsc
+python src\test_stage2.py --no-visible
+python src\main.py --text "进料为甲烷和水蒸气，各组分等摩尔，温度 520℃，压力 1 bar，摩尔流量 100 kmol/h" --save output\case.hsc
 
 :: 需要打印每一步 COM 对象 repr（便于答辩/排查）
 python src\test_stage1.py --no-visible --log-level DEBUG
+python src\test_stage2.py --no-visible --log-level DEBUG
 ```
 
 真实联调成功标准（2026-10-26 已全部满足）：
@@ -387,17 +411,29 @@ python src\test_stage1.py --no-visible --log-level DEBUG
 | `.hsc` | `output\ChemAI_Stage1_20261025_235816.hsc`（160,165 字节） |
 | 进程 | 脚本启动的 HYSYS 已 `Quit`，无后台残留 |
 
+### 阶段2A 验收实际值（2026-10-26）
+
+| 项目 | 结果 |
+|---|---|
+| 测试命令 | `python src\test_stage2.py --visible --log-level DEBUG` |
+| Case | `ChemAI_Stage1_20261026_003648` |
+| 组成 | 10 × 0.1，读回和 = 1.0 |
+| 求解 | `solved=True`，汽化率 `0.42919` |
+| FEED | 298.15 K / 100 kPa / 100 kgmole/h |
+| `.hsc` | `output\ChemAI_Stage1_20261026_003648.hsc`（162,725 字节） |
+| 进程 | 脚本启动的实例已 `Quit`，无残留 |
+
 ---
 
-## ⑪ 阶段1 已知限制
+## ⑪ 阶段1/2A 已知限制
 
-- 物流**未设置组成、未求解**；只验证 COM 能力，不代表工艺结果；
-- 未创建任何反应器；反应器类型字段仅规则占位提示；
-- 规则解析对多温度场景（进料 vs 出口）无法区分，阶段2必须用 LLM 语义解析；
+- 阶段1测试故意不含组成；阶段2A测试含等摩尔组成并完成求解；
+- 未创建任何反应器；反应器类型字段仅为规则占位提示，阶段2B开始实现；
+- 组成解析规则只支持单组分/等摩尔，明确百分比/摩尔比交给 LLM；
+- 规则解析对多温度场景（进料 vs 出口）无法区分，需 LLM 语义解析；
 - 公斤/小时流量未换算；
 - 流体包名称通过 `FluidPackages.Add(name)` 创建时指定；回退 `Add()` 时可能为 `Basis-1`；
 - 仅支持单一流体包；多流体包 Make Current 待核对；
-- `PropertyPackageName = "pengrob"` 已在 V15 远程实测通过；
 - HYSYS COM 部分接口签名仍需在 V15 Object Browser 核对（见 ⑤）。
 
 ---
@@ -442,7 +478,7 @@ FluidPackage.name                 GET + PUT
 | `FluidPackages.Add("名称")` | 成功，流体包直接按名称创建 |
 | `FluidPackages.Add("名称", "PengRobinson")` | 创建成功，但**不会**选择物性包（Type 不是物性包选择器） |
 | 没有组分的 Basis 调 `EndBasisChange` | `E_FAIL` |
-| `Solver.CanSolve = False` | `0x80070005 E_ACCESSDENIED`（此状态下不可用） |
+| `Solver.CanSolve = False`（早期无组分/未激活 Case） | `0x80070005 E_ACCESSDENIED`；在正常可见 Case 中可写（阶段2A 已复测） |
 
 最终结论（2026-10-26）：
 
@@ -469,11 +505,41 @@ EndBasisChange
 
 - `tools/read_open_fluid_packages.py`：只读导出当前 Case 的流体包、真实 PP 名、TypeName、组分；
 - `tools/probe_hysys_property_package.py` v2：类型库成员、`Add(name)`、带组分顺序矩阵、`pengrob` 候选；
-- 报告：`output/probe_hysys_property_package_report.txt`。
+- `tools/probe_hysys_stream_composition.py`：物流组成写入方式、Solver 状态、求解后读回；
+- 报告：`output/probe_hysys_property_package_report.txt`、`output/probe_hysys_stream_composition_report.txt`。
 
-> 状态：**2026-10-26 远程复测通过**。`pengrob` 写入成功，读回
-> `Peng-Robinson`；10 个组分与 FEED 均正常；`hysys.exe` 正常退出、无残留。
-> 阶段1到此定版，后续阶段从“物流组成 + 求解”开始。
+### 阶段2A 联调记录（2026-10-26）
+
+以提交 `1edd61b`、测试入口 `src/test_stage2.py` 完成：
+
+| 测试 | 结果 |
+|---|---|
+| `PropertyPackageName = "pengrob"` + 10 组分 + FEED | 成功 |
+| `ComponentMolarFractionValue = tuple(10×0.1)` | 成功，读回和 = 1.0 |
+| `ComponentMolarFraction.Calculate(tuple)` / `.Values = tuple` | 也可用 |
+| `MolarFractionsValue = tuple` | 不可写（`AttributeError`） |
+| `Solver.CanSolve = False/True`、`IsSolving` | 正常；V15 没有 `Solver.Run()` |
+| 求解后 `VapourFractionValue` | `0.42919`；流股无 `State` 属性 |
+| 原始 `MolarFlowValue` | 100 kgmole/h 显示为 0.02778（默认单位 kgmole/s），必须用 GetValue/SetValue |
+| `.hsc` | 162,725 字节；HYSYS 正常退出，无残留 |
+
+本阶段驱动接口：
+
+```text
+set_stream_composition("FEED", {组分: 摩尔分数})
+  → 按流体包实际组件顺序构造 tuple
+  → 归一化
+  → ComponentMolarFractionValue = tuple
+  → 读回校验
+solve_case()
+  → Solver.CanSolve = True
+  → 轮询 Solver.IsSolving
+read_stream_results("FEED")
+  → T/P/F + mole_fractions + vapour_fraction + solved
+```
+
+> 状态：**阶段1/2A 远程验收通过**。下一步阶段2B：反应器对象模型探针 → Conversion →
+> Equilibrium/Gibbs → 产物分布读取。反应器 API 仍需先对照 V15 类型库，禁止猜测。
 
 ---
 

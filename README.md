@@ -1,7 +1,7 @@
 <p align="center">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.12%20x64-3776AB?logo=python&logoColor=white">
   <img alt="Aspen HYSYS" src="https://img.shields.io/badge/Aspen%20HYSYS-V15-FF6F00">
-  <img alt="Stage 1" src="https://img.shields.io/badge/Stage%201-Verified-2EA043">
+  <img alt="Stages 1 &amp; 2A" src="https://img.shields.io/badge/Stages%201%20%26%202A-Verified-2EA043">
   <img alt="COM" src="https://img.shields.io/badge/Boundary-pywin32%20311-4B8BBE">
 </p>
 
@@ -14,10 +14,11 @@
 | 阶段 | 能力 | 状态 |
 |---|---|---|
 | **Stage 1 — 连通性基础层** | COM 连接、Simulation Case、PR 流体包、10 个标准组分、FEED 物流、`.hsc`、COM 释放 | **2026-10-26 远程验收通过** |
-| Stage 2 — 物流与反应器 | 物流组成/求解、Conversion / Equilibrium / Gibbs 反应器、结果读取 | 规划中 |
+| **Stage 2A — 进料组成与求解** | 摩尔组成写入、Solver、T/P/F/汽化率/组成读回 | **2026-10-26 远程验收通过** |
+| Stage 2B — 反应器建模 | Conversion / Equilibrium / Gibbs 反应器、产物分布 | 下一步 |
 | Stage 3 — AI 编排 | LLM 解析、反应器规则判断、评估指标、报告输出 | 规划中 |
 
-阶段1的物流**尚未设置组成、未求解**；反应器代码尚未开始。
+阶段1/2A 已完成；FEED 可以设置组成并求解；反应器代码尚未开始。
 
 ## 架构概览
 
@@ -31,7 +32,7 @@ nlp_parser.py         规则解析占位（后续替换为 LLM，schema 不变�
 main.py               参数校验 / 缺失处理 / 单位换算 / 调度 / CLI
    │
    ▼
-hysys_driver.py       唯一 COM 边界：Case、流体包、组分、物流、保存、释放
+hysys_driver.py       唯一 COM 边界：Case、流体包、组分、物流、组成、求解、释放
    │
    ▼
 Aspen HYSYS V15  →  output/*.hsc
@@ -78,6 +79,41 @@ python src\test_stage1.py --visible --log-level DEBUG
    `StartBasisChange → Add(name) → PropertyPackageName="pengrob" → Components.Add(...) → EndBasisChange`。  
    空 Basis 直接 `EndBasisChange` 会失败。
 
+## 阶段2A验收记录（2026-10-26）
+
+验收命令：
+
+```bat
+python src\test_stage2.py --visible --log-level DEBUG
+```
+
+测试工况：10 个标准组分，等摩尔组成，`25℃ / 1 bar / 100 kmol·h⁻¹`。
+
+| 验收项 | 实际结果 |
+|---|---|
+| Case | `ChemAI_Stage1_20261026_003648` |
+| 组成 | 10 × 0.1，读回总和 = 1.0 |
+| 求解 | `solved=True`，汽化率 `0.42919` |
+| FEED | `298.15 K / 100 kPa / 100 kgmole/h` |
+| `.hsc` | 已保存（162,725 字节） |
+| 后台进程 | HYSYS 正常 `Quit`，无残留 |
+
+### 阶段2A关键接口结论
+
+1. **`ProcessStream.ComponentMolarFractionValue` 在 V15 可直接写入**  
+   GET/PUT 都存在；传入 `tuple` 即可，数组顺序与 `FluidPackage.Components` 一致。
+   组成的 `ComponentMolarFraction.Calculate(...)` / `.Values = ...` 也可用，
+   `MolarFractionsValue` 不可写。
+2. **求解状态用 Solver 与汽化率判断**  
+   `SimulationCase.Solver.CanSolve` 可读写，`Solver.IsSolving` 可读，
+   V15 该对象没有 `Run()`；流股没有 `State` 属性，用 `VapourFractionValue` 判断求解结果。
+3. **原始 `*Value` 属性使用 HYSYS 默认单位**  
+   例如 `MolarFlowValue` 是 kgmole/s（100 kgmole/h 显示为 0.02778）；
+   读写一律使用 `GetValue/SetValue` 带明确单位。
+4. **组成解析仍是规则占位**  
+   parser 目前支持“单一组分 → 纯组分”和“各组分等摩尔”；
+   明确的摩尔分数/摩尔比交给后续 LLM。
+
 ## 目录结构
 
 ```text
@@ -85,9 +121,10 @@ chem_ai_model/
 ├── src/
 │   ├── config.py          # 配置、标准组分 ID、单位换算（无业务逻辑）
 │   ├── hysys_driver.py    # HYSYS COM 驱动（唯一 win32com 边界）
-│   ├── nlp_parser.py      # 自然语言解析（阶段1规则占位，可本地运行）
+│   ├── nlp_parser.py      # 自然语言解析（阶段1/2A规则占位，可本地运行）
 │   ├── main.py            # 入口 / 调度 / 校验 / CLI
-│   └── test_stage1.py     # 阶段1联调入口（dry-run / 真实 HYSYS）
+│   ├── test_stage1.py     # 阶段1连通模式（无组成）
+│   └── test_stage2.py     # 阶段2A组成 + 求解 + 读回
 ├── tools/
 │   ├── probe_hysys_property_package.py  # 物性包 COM API 诊断探针
 │   ├── probe_hysys_stream_composition.py # 物流组成/求解 COM 探针
@@ -105,7 +142,8 @@ chem_ai_model/
 ```bat
 python src\nlp_parser.py
 python src\test_stage1.py --dry-run
-python src\main.py --dry-run --text "进料为甲烷和水蒸气，温度 520℃，压力 1 bar，摩尔流量 100 kmol/h"
+python src\test_stage2.py --dry-run
+python src\main.py --dry-run --text "进料为甲烷和水蒸气，各组分等摩尔，温度 520℃，压力 1 bar，摩尔流量 100 kmol/h"
 ```
 
 ### HYSYS 工作站（远程）
@@ -114,10 +152,15 @@ python src\main.py --dry-run --text "进料为甲烷和水蒸气，温度 520℃
 
 ```bat
 pip install -r requirements.txt
+
+:: 阶段1：连通性（无组成）
 python src\test_stage1.py --no-visible
+
+:: 阶段2A：组成 + 求解 + 读回
+python src\test_stage2.py --no-visible
 ```
 
-真实运行会创建 `PR_FluidPkg` 流体包、10 个标准组分与 `FEED` 物流，并保存到 `output/`。建议先关闭已有 HYSYS，使本次实例由脚本启动，结束时自动 `Quit` 并检查残留；若附着已有实例，则默认保留该进程。
+真实运行会创建 `PR_FluidPkg`、10 个标准组分与 `FEED`；阶段2A 还会设置组成、求解并读回 T/P/F/汽化率，最后保存到 `output/`。建议先关闭已有 HYSYS，使本次实例由脚本启动，结束时自动 `Quit` 并检查残留；若附着已有实例，则默认保留该进程。
 
 需要观察每一步 COM 对象 repr 时，加 `--log-level DEBUG`。
 
@@ -134,12 +177,14 @@ python src\test_stage1.py --no-visible
 
 - `tools/read_open_fluid_packages.py`：只读列出当前打开 Case 的流体包、`PropertyPackageName`、`PropertyPackage.TypeName` 和组分。
 - `tools/probe_hysys_property_package.py`：导出 COM 类型成员表，验证 `Add(name)`、组分/物性包顺序矩阵和 Peng-Robinson token。
+- `tools/probe_hysys_stream_composition.py`：验证物流组成写入方式、`Solver.CanSolve`、`IsSolving` 和求解后的流股状态。
 
-阶段1排查中已确认 V15 的 `pengrob` token 与 Basis 提交顺序；这两个工具保留用于后续版本或新环境复测。
+阶段1/2A排查中已确认 `pengrob` token、Basis 提交顺序、`ComponentMolarFractionValue` 写入和 Solver 状态接口；工具保留用于后续版本或新环境复测。
 
-## 阶段1边界
+## 当前边界（阶段1/2A）
 
-- 物流不含组成、不求解；本阶段只验证 COM 连通与基础建模。
-- 未创建任何反应器；反应器类型字段仅为规则占位提示。
+- 阶段1测试故意不含组成，用于验证 COM 连通；阶段2A测试含等摩尔组成并完成求解。
+- 未创建任何反应器；反应器类型字段仅为规则占位提示，阶段2B开始实现。
+- 组成解析目前只支持单组分/等摩尔占位，明确比例与 LLM 语义解析放在后续阶段。
 - HYSYS COM 无完整公开文档：仅使用有公开文档/工程代码/远程实测印证的接口；不确定项在代码中标注 **【需要在Excel VBA Object Browser核对】** 并带回退。
 - 默认优先附着已运行的 HYSYS 实例；本次启动的实例在退出时会 `Quit` 并检查 `hysys.exe` 残留。
