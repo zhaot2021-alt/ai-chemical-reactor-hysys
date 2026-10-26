@@ -504,7 +504,12 @@ def run_kinetic(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
         results["liquid_product"] = liquid
         solved = vapour.get("solved") or liquid.get("solved")
     if not solved:
-        raise RuntimeError(f"{reactor_kind.upper()} 产物未求解")
+        detail = (
+            product if reactor_kind == "pfr" else {"vapour": vapour, "liquid": liquid}
+        )
+        raise RuntimeError(
+            f"{reactor_kind.upper()} 产物未求解；产物状态={detail}"
+        )
     save_path = driver.save_case(
         Path(config.OUTPUT_DIR) / f"kinetic_{reactor_kind}_case.hsc"
     )
