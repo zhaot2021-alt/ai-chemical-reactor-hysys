@@ -452,7 +452,7 @@ def _setup_case(app: Any) -> tuple[Any, Any, Any, list[str]]:
     report("\n=== 2. temporary case + feed ===")
     try:
         case = app.SimulationCases.Add(
-            f"KineticProbe_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            f"KineticProbe_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
         )
     except Exception:
         case = app.SimulationCases.Add()
