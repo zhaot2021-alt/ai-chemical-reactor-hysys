@@ -35,6 +35,9 @@ REPORT_PATH = ROOT / "output" / "probe_hysys_reactor_add_report.txt"
 PROBE_COMPONENTS = ("Methane", "H2O")
 
 REACTOR_TYPE_CANDIDATES = (
+    # 来自手动参考 Case 的真实 TypeName
+    "gibbsreactorop", "conversionreactorop", "equilibriumreactorop",
+    "GibbsReactorOp", "ConversionReactorOp", "EquilibriumReactorOp",
     # Gibbs —— CamelCase / 小写 / 短名 / 接口名 / 带空格
     "GibbsReactor", "gibbsreactor", "Gibbs", "gibbs",
     "GibbsOp", "gibbsop", "Gibbs Reactor",
