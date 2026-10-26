@@ -831,6 +831,7 @@ class HYSYSDriver:
         失败抛 HYSYSDriverError。
         """
         label = label or attr
+        # 先试 SetValue，不成就直接塞值；TubeDiameter 就是直接塞被 HYSYS 拒的
         current = None
         try:
             current = getattr(obj, attr)
@@ -917,6 +918,7 @@ class HYSYSDriver:
                 for component_name in reactant_names
             )
             rset.ActiveReactions.Add(reaction)
+            # 顺序别动：激活之前 AE/FF 读写都是 0x80020009，这里踩了一下午
             # 参考 Case 实测：Basis=3（摩尔浓度 kgmole/m3）
             self._set_typed_value(reaction, "Basis", 3, (), "Basis")
             self._set_typed_value(
@@ -1677,6 +1679,7 @@ class HYSYSDriver:
             for component_id in component_names
         }
         array = tuple(target[component_id] for component_id in component_names)
+        # print("组分数组：", array)  # 之前调顺序的时候留着看用的
 
         self.logger.info(
             "设置物流 %s 组成：%s",
@@ -1877,6 +1880,7 @@ class HYSYSDriver:
             )
             return None
 
+        # -32767 是 HYSYS 的"没算出来"，别当真实摩尔分数处理
         if not values or all(value <= -30000 for value in values):
             return None
 

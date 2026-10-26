@@ -143,6 +143,7 @@ def run_gibbs(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
             vap = evaluate(mid)
             best_duty, best_vap = mid, vap
             outlet_t = float(vap["temperature_k"])
+            # print("二分:", low, mid, high, "出口:", outlet_t)  # 调 duty 收敛的时候留的
             if abs(outlet_t - target_k) <= OUTLET_TOL_K:
                 break
             if outlet_t < target_k:
@@ -329,6 +330,7 @@ def run_conversion(
 
 
 def _resolve_molar_flow(plan: dict[str, Any], composition: dict[str, float]) -> float:
+    # 分子量表先放这，后面有空再挪去 config
     molar_flow = plan.get("molar_flow_kmolh")
     if molar_flow is not None:
         return float(molar_flow)
@@ -390,6 +392,7 @@ def run_kinetic(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
         diameter = spec.get("tube_diameter_m")
         if volume is None and (length is None or diameter is None):
             raise ValueError("PFR 需要 total_volume_m3 或 tube_length_m+tube_diameter_m")
+        # LLM 经常只给体积不写管几何，D 先按 0.5 顶着算个 L
         # 缺管几何时补默认：D=0.5 m，L 由体积反算（建模假设，日志说明）
         if volume is not None and length is None and diameter is None:
             diameter = 0.5

@@ -110,6 +110,7 @@ def _cmd_plan(args: argparse.Namespace) -> int:
 
 def _check_plan_requirements(plan: dict) -> list[str]:
     """运行前检查 plan 缺什么信息（考核要求：信息不足时应说明需补充的内容）。"""
+    # 缺啥列啥，别让执行到一半再报
     missing: list[str] = []
     reactor_type = str(plan.get("reactor_type", "")).lower()
     if not plan.get("components"):
@@ -205,6 +206,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         elif reactor_type == "equilibrium":
             summary = run_equilibrium(plan, driver)
         elif reactor_type in ("pfr", "cstr"):
+            # pfr/cstr 都走同一个 kinetic 执行器
             summary = run_kinetic(plan, driver)
         else:
             logging.error(

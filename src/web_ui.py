@@ -34,6 +34,7 @@ import llm_planner  # noqa: E402
 INDEX_HTML = (SRC_DIR / "index.html").read_text(encoding="utf-8")
 _RUN_LOCK = threading.Lock()
 logger = logging.getLogger("web_ui")
+# 页面和接口先塞在这一个文件里，够用就不拆了
 
 
 def _json_response(handler: BaseHTTPRequestHandler, payload: dict, status: int = 200) -> None:

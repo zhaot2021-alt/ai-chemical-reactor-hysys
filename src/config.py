@@ -34,7 +34,8 @@ HYSYS_SHUTDOWN_WAIT_S = 2.0          # Quit 后等待进程退出再检查
 HYSYS_TASKLIST_TIMEOUT_S = 15.0      # tasklist 检查超时
 HYSYS_SOLVE_TIMEOUT_S = 30.0         # 等待 Solver.IsSolving 结束的超时
 HYSYS_SOLVE_POLL_S = 0.2             # 求解状态轮询间隔
-COMPOSITION_TOLERANCE = 1e-6         # 组成归一化/读回误差容限
+# 先按 1e-6 用着。之前用过 1e-4，太松了会漏判读回不一致，跑几组工况再看要不要调
+COMPOSITION_TOLERANCE = 1e-6
 
 # ==================== HYSYS 内部单位（驱动层只接受这些单位） ====================
 HYSYS_TEMPERATURE_UNIT = "K"
@@ -281,6 +282,7 @@ LLM_CONFIG = {
 
 # ==================== 反应器 COM 类型 ID（V15 实测） ====================
 # 来自手动参考 Case 的 TypeName，并已在 V15 用 Operations.Add(name, id) 创建成功。
+# 这几个串是探针一个个试出来的，CamelCase 全部报错，别乱改
 REACTOR_TYPE_IDS = {
     "gibbs": "gibbsreactorop",
     "conversion": "conversionreactorop",

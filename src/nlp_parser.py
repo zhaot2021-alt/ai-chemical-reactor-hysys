@@ -179,6 +179,7 @@ def _extract_temperature(text: str) -> tuple[float | None, list[str]]:
     if not values:
         return None, notes
 
+    # 进料温度和出口温度混在一个句子里的场景，规则解析分不清，先取第一个
     if len(values) > 1:
         shown = [value for _, value in values]
         notes.append(

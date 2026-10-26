@@ -158,6 +158,7 @@ def resolve_provider() -> tuple[str, str, str, str]:
 
 
 def _extract_json(content: str) -> dict[str, Any]:
+    # LLM 偶尔会包 ```json 或者前面加解释，先剥一层，不行再粗暴截 { 到 }
     text = content.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
@@ -212,6 +213,7 @@ def _normalize_plan(plan: dict[str, Any]) -> dict[str, Any]:
             raise LLMPlanError("reaction.stoichiometry 为空")
         kinetics = reaction.get("kinetics") or {}
         normalized_kinetics = None
+        # kinetics 是后来做 CSTR/PFR 才加的字段，老 plan 没有就当 None 跳过
         if isinstance(kinetics, dict) and kinetics:
             def _num_or_none(field: str):
                 value = kinetics.get(field)

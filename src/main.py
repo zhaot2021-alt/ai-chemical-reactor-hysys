@@ -140,6 +140,7 @@ def _resolve_feed(
 
     feed: dict[str, float] = {}
     defaults_used: list[str] = []
+    # 默认值先兜着跑通连通性，strict 模式下面这些缺失会直接报
 
     for field, default_value in config.DEFAULT_FEED_CONDITIONS.items():
         value = parsed.get(field)  # type: ignore[typeddict-item]
