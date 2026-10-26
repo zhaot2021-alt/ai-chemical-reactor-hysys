@@ -15,10 +15,10 @@
 |---|---|---|
 | **Stage 1 — 连通性基础层** | COM 连接、Simulation Case、PR 流体包、10 个标准组分、FEED 物流、`.hsc`、COM 释放 | **2026-10-26 远程验收通过** |
 | **Stage 2A — 进料组成与求解** | 摩尔组成写入、Solver、T/P/F/汽化率/组成读回 | **2026-10-26 远程验收通过** |
-| Stage 2B — 反应器建模 | Gibbs 710/600℃、Conversion 380℃/25bar/50% | HYSYS 计算已验证；统一入口待复测 |
-| Stage 3 — AI 编排 | 本地 LLM 生成 plan，远程执行 plan | 已接入，待联调 |
+| **Stage 2B — 反应器建模** | Gibbs 710/600℃、Conversion 380℃/25bar/50% | **2026-10-26 统一入口联调通过** |
+| **Stage 3 — AI 编排** | 本地 LLM 生成 plan，远程执行 plan | **2026-10-26 两段式联调通过** |
 
-阶段1/2A 已完成；Gibbs 与 Conversion 两个场景的 HYSYS 计算已验证。
+阶段1/2A/2B 与两段式 AI 入口均已完成；两个必测场景已通过统一入口远程联调。
 
 ## 架构概览
 
@@ -173,24 +173,33 @@ python src\test_stage2.py --no-visible
 **本地（LLM key 只在本地环境变量；不写入仓库，也不需要放到远程）**
 
 ```bat
-python srcgent.py plan --text "自然语言需求" --out output\plan.json
+python src\agent.py plan --text "自然语言需求" --out output\plan.json
 ```
 
 已预生成两个必测场景的 plan：
 
 ```text
 plans\gibbs_reformer.json
-plans	oluene_disproportionation.json
+plans\toluene_disproportionation.json
 ```
 
 **远程 HYSYS 工作站（不需要 LLM key）**
 
 ```bat
-python srcgent.py run --plan plans\gibbs_reformer.json --visible --log-level DEBUG
-python srcgent.py run --plan plans	oluene_disproportionation.json --visible --log-level DEBUG
+python src\agent.py run --plan plans\gibbs_reformer.json --visible --log-level DEBUG
+python src\agent.py run --plan plans\toluene_disproportionation.json --visible --log-level DEBUG
 ```
 
 > Gibbs 场景使用等效预热达到 710℃/600℃；Conversion 场景依赖 `output/ref_conversion.hsc` 结构模板（50% 转化率）。
+
+### 联合验收结果（2026-10-26）
+
+| 场景 | 关键结果 |
+|---|---|
+| 甲烷蒸汽重整（Gibbs） | 710℃：CH4 9.62% / H2O 38.45% / CO 4.57% / CO2 6.73% / H2 40.63%；600℃：CH4 16.16% / H2O 49.73% / CO 1.18% / CO2 5.88% / H2 27.06% |
+| 甲苯歧化（Conversion） | 380℃ / 2.5 MPa / 10000 kg/h，实际转化率 **50.00%**；苯 25%，邻/间/对二甲苯各约 8.3%，甲苯 50% |
+
+两个场景均由 `agent.py run` 读取 LLM plan 执行，远程不需要 LLM key；HYSYS 正常 Quit，无后台残留。
 
 ## 单位约定
 
