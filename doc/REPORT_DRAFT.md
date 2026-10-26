@@ -43,6 +43,10 @@ HYSYS V15 COM 文档不完整，主要问题均通过黑盒探针 + 类型库成
 5. **热输入**：Gibbs 反应器通过 `EnergyStream` + `HeatFlow.SetValue` 补热，FEED 保持 520℃。
 6. **反应配置**：`conversionrxn` / `equilibriumrxn` + `Reactants.Add` + `ReactantStoichCoefValue` + `BaseComponent` / `EquilibriumConstant` + `AssociateFluidPackage`；反应器 `ReactionSet` 绑定后求解。
 7. **单位坑**：原始 `*Value` 属性用 HYSYS 默认单位（如 `MolarFlowValue` 是 kgmole/s），代码统一用 `GetValue/SetValue`。
+8. **kinetic 动力学**：用类型库枚举 + 用户 GUI 参考 Case 对照定位接口。关键发现：ReactionPhase 枚举中
+   1=LiquidPhase 会使气相进料零反应（GUI 下拉框核对后改 0=Overall 解决）；写逆向参数会重置相态，须最后写；
+   TubeDiameter 由体积/管长计算、不可直接写；CSTR 液位 50% 时气相停留体积减半（与解析解精确吻合）。
+   最终 PFR/CSTR 转化率与二级反应解析解一致（1.98% / 1.00%）。
 
 ## 5. 必测场景结果
 
