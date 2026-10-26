@@ -526,6 +526,45 @@ class HYSYSDriver:
                 break
         return result
 
+    def create_reactor(self, reactor_type: str, name: str) -> str:
+        """
+        按已验证的 V15 TypeName 创建反应器：
+          gibbs -> gibbsreactorop
+          conversion -> conversionreactorop
+          equilibrium -> equilibriumreactorop
+
+        只创建操作，不连接物流/不设置条件；连接与工况成员需按参考 Case 单独验证。
+        """
+        self._require_case()
+        key = str(reactor_type).strip().lower()
+        type_id = config.REACTOR_TYPE_IDS.get(key)
+        if type_id is None:
+            raise ValueError(
+                f"未知反应器类型 {reactor_type!r}；"
+                f"支持：{sorted(config.REACTOR_TYPE_IDS)}"
+            )
+        operation_name = str(name).strip()
+        if not operation_name:
+            raise ValueError("反应器名称不能为空")
+
+        try:
+            operation = self._case.Flowsheet.Operations.Add(
+                operation_name, type_id
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HYSYSDriverError(
+                f"创建 {key} 反应器失败（TypeName={type_id}）："
+                f"{_com_error_detail(exc)}"
+            ) from exc
+
+        self.logger.info(
+            "已创建反应器：%s（TypeName=%s，COM=%s）",
+            operation_name,
+            type_id,
+            _safe_repr(operation),
+        )
+        return operation_name
+
     def create_fluid_package(
         self,
         name: str | None = None,

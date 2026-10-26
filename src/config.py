@@ -248,6 +248,14 @@ LLM_CONFIG = {
     "timeout_s": 60,
 }
 
+# ==================== 反应器 COM 类型 ID（V15 实测） ====================
+# 来自手动参考 Case 的 TypeName，并已在 V15 用 Operations.Add(name, id) 创建成功。
+REACTOR_TYPE_IDS = {
+    "gibbs": "gibbsreactorop",
+    "conversion": "conversionreactorop",
+    "equilibrium": "equilibriumreactorop",
+}
+
 # ==================== 反应器选择规则（纯数据，阶段2使用） ====================
 # 规则来自考核说明《选择逻辑》：
 #   1) 有动力学参数 → 动力学反应器（液相 CSTR / 气相 PFR）
