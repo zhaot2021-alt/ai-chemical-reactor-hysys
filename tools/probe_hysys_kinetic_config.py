@@ -77,13 +77,13 @@ def try_set_prop(
     label: str = "",
 ) -> bool:
     label = label or attr
+    current = None
     try:
         current = getattr(obj, attr)
     except Exception as exc:  # noqa: BLE001
-        log(f"  SET {label}: GET failed {com_detail(exc)}")
-        return False
+        log(f"  SET {label}: GET failed, will still try PUT: {com_detail(exc)}")
 
-    if hasattr(current, "SetValue"):
+    if current is not None and hasattr(current, "SetValue"):
         for unit in units:
             try:
                 current.SetValue(value, unit)
@@ -93,10 +93,10 @@ def try_set_prop(
                 log(f"  SET {label} = {value!r} [{unit}] failed: {com_detail(exc)}")
     try:
         setattr(obj, attr, value)
-        log(f"  SET {label} = {value!r} OK (direct)")
+        log(f"  SET {label} = {value!r} OK (direct PUT)")
         return True
     except Exception as exc:  # noqa: BLE001
-        log(f"  SET {label} = {value!r} failed (direct): {com_detail(exc)}")
+        log(f"  SET {label} = {value!r} failed (direct PUT): {com_detail(exc)}")
     return False
 
 
@@ -149,8 +149,6 @@ def setup(app: Any) -> tuple[Any, Any, Any, list[str]]:
     manager = case.BasisManager.ReactionPackageManager
 
     rset = manager.ReactionSets.Add("KineticSet", "Kinetic")
-    rset.AssociateFluidPackage(fp)
-    fp.ReactionPackage.ReactionSets.Add(rset)
     log(f"  reaction set: {rset!r}")
 
     rxn = manager.Reactions.Add("RWGS-KIN", "kineticrxn")
@@ -166,6 +164,32 @@ def setup(app: Any) -> tuple[Any, Any, Any, list[str]]:
     )
     log("  Reactants.Add + ReactantStoichCoefValue OK")
 
+    orders = tuple(1.0 if name in ("CO2", "Hydrogen") else 0.0 for name in components)
+    try_set_prop(rxn, "ComponentForwardOrderValue", orders)
+    try_set_prop(rxn, "ComponentReverseOrderValue", tuple(0.0 for _ in components))
+    try_set_prop(rxn, "ReactionPhase", 1)
+
+    # 先挂入 ActiveReactions，再关联 FP；失败则改为先关联再试一次
+    active_added = False
+    try:
+        rset.ActiveReactions.Add(rxn)
+        active_added = True
+        log("  ActiveReactions.Add OK (before association)")
+    except Exception as exc:  # noqa: BLE001
+        log(f"  ActiveReactions.Add before association failed: {com_detail(exc)}")
+    try:
+        rset.AssociateFluidPackage(fp)
+        fp.ReactionPackage.ReactionSets.Add(rset)
+        log("  reaction set associated to FP")
+    except Exception as exc:  # noqa: BLE001
+        log(f"  associate FP failed: {com_detail(exc)}")
+    if not active_added:
+        try:
+            rset.ActiveReactions.Add(rxn)
+            log("  ActiveReactions.Add OK (after association)")
+        except Exception as exc:  # noqa: BLE001
+            log(f"  ActiveReactions.Add after association failed: {com_detail(exc)}")
+
     log("\n--- current kinetic members ---")
     for attr in (
         "ReactionPhase", "Basis", "BasisUnits2", "RateUnits2",
@@ -176,11 +200,10 @@ def setup(app: Any) -> tuple[Any, Any, Any, list[str]]:
     ):
         describe_prop(rxn, attr)
 
-    log("\n--- set kinetic parameters ---")
-    orders = tuple(1.0 if name in ("CO2", "Hydrogen") else 0.0 for name in components)
-    try_set_prop(rxn, "ComponentForwardOrderValue", orders)
-    try_set_prop(rxn, "ComponentReverseOrderValue", tuple(0.0 for _ in components))
-    try_set_prop(rxn, "ReactionPhase", 1)
+    log("\n--- set kinetic parameters (after activation/association) ---")
+    try_set_prop(rxn, "Basis", 3)
+    try_set_prop(rxn, "BasisUnits2", "kgmole/m3")
+    try_set_prop(rxn, "RateUnits2", "kgmole/m3-s")
     try_set_prop(
         rxn, "ForwardActivationEnergy", 50000.0,
         ("kJ/kgmole", "J/mol", "kJ/kmol", "Btu/lbmole"),
@@ -204,11 +227,6 @@ def setup(app: Any) -> tuple[Any, Any, Any, list[str]]:
     ):
         read_process_value(rxn, attr, ("kJ/kgmole", "J/mol", "kJ/kmol"))
 
-    try:
-        rset.ActiveReactions.Add(rxn)
-        log("  ActiveReactions.Add OK")
-    except Exception as exc:  # noqa: BLE001
-        log(f"  ActiveReactions.Add failed: {com_detail(exc)}")
     return case, fp, feed, components
 
 
