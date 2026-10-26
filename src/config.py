@@ -132,6 +132,9 @@ CASE_NAME_PREFIX = "ChemAI_Stage1"
 FEED_STREAM_NAME = "FEED"
 HSC_EXTENSION = ".hsc"
 
+# Conversion 场景使用的结构模板（用户手动建好、含反应集/50% 转化率）
+CONVERSION_TEMPLATE_PATH = OUTPUT_DIR / "ref_conversion.hsc"
+
 # 外部输入单位：温度 ℃，压力 bar，摩尔流量 kmol·h⁻¹
 DEFAULT_FEED_CONDITIONS = {
     "temperature_c": 25.0,

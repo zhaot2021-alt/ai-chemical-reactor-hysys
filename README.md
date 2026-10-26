@@ -15,10 +15,10 @@
 |---|---|---|
 | **Stage 1 — 连通性基础层** | COM 连接、Simulation Case、PR 流体包、10 个标准组分、FEED 物流、`.hsc`、COM 释放 | **2026-10-26 远程验收通过** |
 | **Stage 2A — 进料组成与求解** | 摩尔组成写入、Solver、T/P/F/汽化率/组成读回 | **2026-10-26 远程验收通过** |
-| Stage 2B — 反应器建模 | Conversion / Equilibrium / Gibbs 反应器、产物分布 | 下一步 |
-| Stage 3 — AI 编排 | LLM 解析、反应器规则判断、评估指标、报告输出 | 规划中 |
+| Stage 2B — 反应器建模 | Gibbs 710/600℃、Conversion 380℃/25bar/50% | HYSYS 计算已验证；统一入口待复测 |
+| Stage 3 — AI 编排 | 本地 LLM 生成 plan，远程执行 plan | 已接入，待联调 |
 
-阶段1/2A 已完成；FEED 可以设置组成并求解；反应器代码尚未开始。
+阶段1/2A 已完成；Gibbs 与 Conversion 两个场景的 HYSYS 计算已验证。
 
 ## 架构概览
 
@@ -132,6 +132,7 @@ chem_ai_model/
 │   ├── probe_hysys_reactor_add.py        # 反应器 Add 类型串快速探针
 │   ├── read_open_operations.py           # 只读导出参考 Case 的物流/操作成员
 │   └── read_open_fluid_packages.py       # 只读导出 Case/流体包/真实物性包名
+├── plans/                 # LLM 生成的 plan.json（两个必测场景）
 ├── doc/
 │   └── ARCHITECTURE.md    # 分层架构、接口、COM 可信度、扩展点
 ├── output/                # .hsc 输出目录
@@ -167,6 +168,30 @@ python src\test_stage2.py --no-visible
 
 需要观察每一步 COM 对象 repr 时，加 `--log-level DEBUG`。
 
+## 两段式 AI 使用
+
+**本地（LLM key 只在本地环境变量；不写入仓库，也不需要放到远程）**
+
+```bat
+python srcgent.py plan --text "自然语言需求" --out output\plan.json
+```
+
+已预生成两个必测场景的 plan：
+
+```text
+plans\gibbs_reformer.json
+plans	oluene_disproportionation.json
+```
+
+**远程 HYSYS 工作站（不需要 LLM key）**
+
+```bat
+python srcgent.py run --plan plans\gibbs_reformer.json --visible --log-level DEBUG
+python srcgent.py run --plan plans	oluene_disproportionation.json --visible --log-level DEBUG
+```
+
+> Gibbs 场景使用等效预热达到 710℃/600℃；Conversion 场景依赖 `output/ref_conversion.hsc` 结构模板（50% 转化率）。
+
 ## 单位约定
 
 | 位置 | 单位 |
@@ -187,10 +212,12 @@ python src\test_stage2.py --no-visible
 
 阶段1/2A排查中已确认 `pengrob` token、Basis 提交顺序、`ComponentMolarFractionValue` 写入和 Solver 状态接口；工具保留用于后续版本或新环境复测。
 
-## 当前边界（阶段1/2A）
+## 当前边界（阶段2B）
 
 - 阶段1测试故意不含组成，用于验证 COM 连通；阶段2A测试含等摩尔组成并完成求解。
-- 未创建任何反应器；反应器类型字段仅为规则占位提示，阶段2B开始实现。
-- 组成解析目前只支持单组分/等摩尔占位，明确比例与 LLM 语义解析放在后续阶段。
+- Gibbs/Conversion 反应器已可创建/连接/求解；Equilibrium 尚未接入执行器。
+- Gibbs 为绝热反应器，出口目标温度用等效预热实现；不是伪造温度属性。
+- 当前 Conversion 执行器使用 50% 甲苯歧化模板，其他转化率/反应体系尚未泛化。
+- LLM 规划在当前机器生成 plan；远程执行不依赖 key。
 - HYSYS COM 无完整公开文档：仅使用有公开文档/工程代码/远程实测印证的接口；不确定项在代码中标注 **【需要在Excel VBA Object Browser核对】** 并带回退。
 - 默认优先附着已运行的 HYSYS 实例；本次启动的实例在退出时会 `Quit` 并检查 `hysys.exe` 残留。
