@@ -12,6 +12,7 @@ scenario_runner.py — 执行 LLM plan（远程 HYSYS 侧，不需要 LLM key）
 from __future__ import annotations
 
 import logging
+import math
 import time
 from pathlib import Path
 from typing import Any
@@ -384,10 +385,26 @@ def run_kinetic(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
 
     spec = plan.get("reactor_spec") or {}
     if reactor_kind == "pfr":
-        if spec.get("total_volume_m3") is None and (
-            spec.get("tube_length_m") is None or spec.get("tube_diameter_m") is None
-        ):
+        volume = spec.get("total_volume_m3")
+        length = spec.get("tube_length_m")
+        diameter = spec.get("tube_diameter_m")
+        if volume is None and (length is None or diameter is None):
             raise ValueError("PFR 需要 total_volume_m3 或 tube_length_m+tube_diameter_m")
+        # 缺管几何时补默认：D=0.5 m，L 由体积反算（建模假设，日志说明）
+        if volume is not None and length is None and diameter is None:
+            diameter = 0.5
+        if volume is not None and length is None and diameter is not None:
+            length = float(volume) / (math.pi * (float(diameter) / 2.0) ** 2)
+            logger.warning(
+                "PFR 未给出管长，按 D=%.4g m 由体积反算 L=%.4g m（建模假设）",
+                float(diameter), length,
+            )
+        if diameter is None and length is not None:
+            diameter = 0.5
+            logger.warning("PFR 未给出管径，默认 D=0.5 m（建模假设）")
+        spec = dict(spec)
+        spec["tube_length_m"] = spec.get("tube_length_m") or length
+        spec["tube_diameter_m"] = spec.get("tube_diameter_m") or diameter
     else:
         if spec.get("volume_m3") is None:
             raise ValueError("CSTR 需要 volume_m3")
