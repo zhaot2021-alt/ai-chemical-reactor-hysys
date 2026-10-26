@@ -915,8 +915,11 @@ class HYSYSDriver:
                 float((reverse_orders or {}).get(component_name, 0.0))
                 for component_name in reactant_names
             )
-            reaction.ReactionPhase = int(reaction_phase)
             rset.ActiveReactions.Add(reaction)
+            # 相态必须在激活后设置（激活会重置 ReactionPhase；参考 Case 气相=1）
+            self._set_typed_value(
+                reaction, "ReactionPhase", int(reaction_phase), (), "ReactionPhase"
+            )
             # 参考 Case 实测：Basis=3（摩尔浓度 kgmole/m3）
             self._set_typed_value(reaction, "Basis", 3, (), "Basis")
             self._set_typed_value(
@@ -1056,14 +1059,29 @@ class HYSYSDriver:
             ("LiquidLevelValue", liquid_level_pct, ("%",)),
             ("HeatFlowValue", heat_flow_kj_h, ("kJ/h",)),
         ):
-            if value is not None:
+            if value is None:
+                continue
+            try:
                 self._set_typed_value(operation, attr, float(value), units)
+            except HYSYSDriverError as exc:
+                # 设计参数 best-effort：如 TubeDiameter 由 V/L 计算时会被拒绝，
+                # 求解失败会在 solve 阶段暴露，这里只告警。
+                self.logger.warning(
+                    "设置 %s 设计参数 %s 失败（继续）：%s",
+                    reactor_name, attr, exc,
+                )
         for attr, value in (
             ("PhaseType", phase_type),
             ("HoldupInitType", holdup_init_type),
         ):
-            if value is not None:
+            if value is None:
+                continue
+            try:
                 self._set_typed_value(operation, attr, int(value), ())
+            except HYSYSDriverError as exc:  # noqa: BLE001
+                self.logger.warning(
+                    "设置 %s %s 失败（继续）：%s", reactor_name, attr, exc
+                )
 
         result = {
             "reactor": reactor_name,

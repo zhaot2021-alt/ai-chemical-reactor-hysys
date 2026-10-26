@@ -136,9 +136,9 @@ def make_reaction(
     rxn.ReactantStoichCoefValue = tuple(stoich[c] for c in reactant_names)
     rxn.ComponentForwardOrderValue = tuple(orders.get(c, 0.0) for c in reactant_names)
     rxn.ComponentReverseOrderValue = tuple(0.0 for _ in reactant_names)
-    rxn.ReactionPhase = 1
     rset.ActiveReactions.Add(rxn)
     log(f"  [{name}] 激活后写参数：")
+    try_set(rxn, "ReactionPhase", 1)
     try_set(rxn, "Basis", 3)
     try_set(rxn, "BasisUnits2", "kgmole/m3")
     try_set(rxn, "RateUnits2", "kgmole/m3-s")
@@ -169,9 +169,10 @@ def build_pfr(case: Any, feed: Any, rset: Any, components: list[str]) -> None:
     pfr.EnergyStream = energy
     pfr.ReactionSet = rset
     pfr.PressureDropValue = 0.0
-    for attr, value in (("TotalVolumeValue", 1.0), ("TubeLengthValue", 5.0929),
-                        ("TubeDiameterValue", 0.5), ("HeatFlowValue", 0.0)):
-        try_set(pfr, attr, value, ("m3",) if attr == "TotalVolumeValue" else ("m",) if "Length" in attr or "Diameter" in attr else ("kJ/h",))
+    # 参考 Case：V=1、L=5.09，D 由 HYSYS 计算（直接 PUT D 会被拒 E_INVALIDARG）
+    try_set(pfr, "TotalVolumeValue", 1.0, ("m3",))
+    try_set(pfr, "TubeLengthValue", 5.0929, ("m",))
+    try_set(pfr, "HeatFlowValue", 0.0, ("kJ/h",))
     try_set(pfr, "PhaseType", 5)
     try_set(pfr, "HoldupInitType", 1)
     try:
@@ -188,7 +189,9 @@ def build_cstr(case: Any, feed: Any, rset: Any, components: list[str],
     cstr = case.Flowsheet.Operations.Add(f"CSTR-{tag}", "KineticReactorop")
     vapour = case.Flowsheet.MaterialStreams.Add(f"CSTR-{tag}-VAP")
     liquid = case.Flowsheet.MaterialStreams.Add(f"CSTR-{tag}-LIQ")
-    cstr.Feeds.Add(feed)
+    # CSTR 不能复用已连到其他反应器的进料流，必须自建进料
+    own_feed = make_feed(case, f"FEED-{tag}", components)
+    cstr.Feeds.Add(own_feed)
     cstr.VapourProduct = vapour
     cstr.LiquidProduct = liquid
     cstr.ReactionSet = rset
