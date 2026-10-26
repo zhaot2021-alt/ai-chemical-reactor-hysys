@@ -174,11 +174,13 @@ python src\test_stage2.py --no-visible
 python src\agent.py plan --text "自然语言需求" --out output\plan.json
 ```
 
-plan 由自然语言生成（本地需 LLM key），例如：
+plan 由自然语言生成（需 LLM key），例如：
 
 ```bat
 python src\agent.py plan --text "甲苯进料 10000 kg/h、380℃、2.5MPa，歧化反应 2C7H8->C6H6+C8H10，转化率 50%" --out output\plan.json
 ```
+
+仓库 `plans/` 已附带 5 个开箱即用的示例 plan（两必测场景 + Equilibrium + PFR + CSTR 动力学）。
 
 **远程 HYSYS 工作站（不需要 LLM key）**
 
