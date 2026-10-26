@@ -128,7 +128,8 @@ chem_ai_model/
 ├── tools/
 │   ├── probe_hysys_property_package.py  # 物性包 COM API 诊断探针
 │   ├── probe_hysys_stream_composition.py # 物流组成/求解 COM 探针
-│   └── read_open_fluid_packages.py      # 只读导出 Case/流体包/真实物性包名
+│   ├── probe_hysys_reactors.py           # 反应器对象模型探针
+│   └── read_open_fluid_packages.py       # 只读导出 Case/流体包/真实物性包名
 ├── doc/
 │   └── ARCHITECTURE.md    # 分层架构、接口、COM 可信度、扩展点
 ├── output/                # .hsc 输出目录
@@ -178,6 +179,7 @@ python src\test_stage2.py --no-visible
 - `tools/read_open_fluid_packages.py`：只读列出当前打开 Case 的流体包、`PropertyPackageName`、`PropertyPackage.TypeName` 和组分。
 - `tools/probe_hysys_property_package.py`：导出 COM 类型成员表，验证 `Add(name)`、组分/物性包顺序矩阵和 Peng-Robinson token。
 - `tools/probe_hysys_stream_composition.py`：验证物流组成写入方式、`Solver.CanSolve`、`IsSolving` 和求解后的流股状态。
+- `tools/probe_hysys_reactors.py`：导出 Flowsheet/Operations/ReactionPackage 成员，并尝试创建 Gibbs / Conversion / Equilibrium 反应器。
 
 阶段1/2A排查中已确认 `pengrob` token、Basis 提交顺序、`ComponentMolarFractionValue` 写入和 Solver 状态接口；工具保留用于后续版本或新环境复测。
 
