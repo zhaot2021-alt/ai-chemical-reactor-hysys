@@ -1007,11 +1007,13 @@ class HYSYSDriver:
             "temperature_k": None,
             "pressure_kpa": None,
             "molar_flow_kgmoleh": None,
+            "mass_flow_kg_h": None,
         }
         read_specs = (
             ("temperature_k", "Temperature", config.HYSYS_TEMPERATURE_UNIT),
             ("pressure_kpa", "Pressure", config.HYSYS_PRESSURE_UNIT),
             ("molar_flow_kgmoleh", "MolarFlow", config.HYSYS_MOLAR_FLOW_UNIT),
+            ("mass_flow_kg_h", "MassFlow", "kg/h"),
         )
         for key, attribute, unit in read_specs:
             try:
@@ -1035,9 +1037,13 @@ class HYSYSDriver:
         temperature_k: float | None = None,
         pressure_kpa: float | None = None,
         molar_flow_kgmoleh: float | None = None,
+        mass_flow_kg_h: float | None = None,
     ) -> dict[str, Any]:
-        """设置已有物流的 T/P/F（内部单位）；不自动求解。"""
+        """设置已有物流的 T/P/流量（内部单位）；不自动求解。"""
         stream = self._get_stream(name)
+        if molar_flow_kgmoleh is not None and mass_flow_kg_h is not None:
+            raise ValueError("molar_flow_kgmoleh 与 mass_flow_kg_h 不能同时设置")
+
         updates: list[tuple[str, float, str, str]] = []
         if temperature_k is not None:
             updates.append(
@@ -1054,8 +1060,13 @@ class HYSYSDriver:
                 ("MolarFlow", _positive_float(molar_flow_kgmoleh, "molar_flow_kgmoleh"),
                  config.HYSYS_MOLAR_FLOW_UNIT, "molar flow")
             )
+        if mass_flow_kg_h is not None:
+            updates.append(
+                ("MassFlow", _positive_float(mass_flow_kg_h, "mass_flow_kg_h"),
+                 "kg/h", "mass flow")
+            )
         if not updates:
-            raise ValueError("至少提供一个温度/压力/摩尔流量")
+            raise ValueError("至少提供一个温度/压力/流量")
 
         for attribute, value, unit, label in updates:
             try:
