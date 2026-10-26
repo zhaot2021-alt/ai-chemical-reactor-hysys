@@ -36,7 +36,6 @@ output/*.txt
 
 # 交付物/文档（不进 GitHub 仓库，仅本地）
 /doc/
-/plans/
 /交付物/
 /AI化工反应器建模实战考核.md
 /tools/export_sessions.py
