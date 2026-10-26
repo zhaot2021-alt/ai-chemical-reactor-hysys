@@ -422,7 +422,7 @@ def run_kinetic(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
             reverse_frequency_factor=float(
                 kinetics.get("reverse_frequency_factor_m3_kgmole_s", 0.0)
             ),
-            reaction_phase=int(kinetics.get("reaction_phase", 1)),
+            reaction_phase=int(kinetics.get("reaction_phase", 0)),
         )
 
     if reactor_kind == "pfr":

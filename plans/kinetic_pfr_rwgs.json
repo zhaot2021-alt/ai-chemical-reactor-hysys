@@ -3,7 +3,13 @@
   "plan": {
     "reactor_type": "pfr",
     "reason": "用户提供动力学参数且体系为气相，按考核规则选择 PFR（平推流）。",
-    "components": ["Methane", "Hydrogen", "CO2", "CO", "H2O"],
+    "components": [
+      "Methane",
+      "Hydrogen",
+      "CO2",
+      "CO",
+      "H2O"
+    ],
     "feed_composition": {
       "Methane": 0.0,
       "Hydrogen": 0.5,
@@ -20,15 +26,23 @@
     "reactions": [
       {
         "name": "Rxn-1",
-        "stoichiometry": {"CO2": -1.0, "Hydrogen": -1.0, "CO": 1.0, "H2O": 1.0},
+        "stoichiometry": {
+          "CO2": -1.0,
+          "Hydrogen": -1.0,
+          "CO": 1.0,
+          "H2O": 1.0
+        },
         "base_component": "",
         "conversion_percent": null,
         "equilibrium_constant": null,
         "kinetics": {
-          "reaction_phase": 1,
+          "reaction_phase": 0,
           "activation_energy_kj_kgmole": 50000.0,
           "frequency_factor_m3_kgmole_s": 1000.0,
-          "forward_orders": {"CO2": 1.0, "Hydrogen": 1.0},
+          "forward_orders": {
+            "CO2": 1.0,
+            "Hydrogen": 1.0
+          },
           "reverse_orders": {},
           "reverse_activation_energy_kj_kgmole": 0.0,
           "reverse_frequency_factor_m3_kgmole_s": 0.0

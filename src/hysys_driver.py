@@ -867,7 +867,7 @@ class HYSYSDriver:
         reverse_orders: Mapping[str, float] | None = None,
         reverse_activation_energy: float = 0.0,
         reverse_frequency_factor: float = 0.0,
-        reaction_phase: int = 1,
+        reaction_phase: int = 0,
     ) -> str:
         """
         创建 kineticrxn 并加入反应集（全部按参考 Case 实测接口）：
@@ -875,8 +875,9 @@ class HYSYSDriver:
           Reactants.Add(仅参与反应的组分)
           ReactantStoichCoefValue / ComponentForwardOrderValue /
           ComponentReverseOrderValue = tuple（按 Reactants 顺序）
-          ReactionPhase（1=气相）
-          先 ActiveReactions.Add 激活，再写 AE/FF（激活前 GET/PUT 失败）
+          ReactionPhase：0=Overall（GUI 实测默认；1=Liquid 会让气相进料零反应）
+          先 ActiveReactions.Add 激活，再写 AE/FF（激活前 GET/PUT 失败）；
+          相态最后写（写逆向参数会把相态重置为 CombinedLiquid）。
         AE 单位 kJ/kgmole；FF 单位 m3/kgmole-s（Basis=3, kgmole/m3）。
         """
         self._require_fluid_pkg()
@@ -916,10 +917,6 @@ class HYSYSDriver:
                 for component_name in reactant_names
             )
             rset.ActiveReactions.Add(reaction)
-            # 相态必须在激活后设置（激活会重置 ReactionPhase；参考 Case 气相=1）
-            self._set_typed_value(
-                reaction, "ReactionPhase", int(reaction_phase), (), "ReactionPhase"
-            )
             # 参考 Case 实测：Basis=3（摩尔浓度 kgmole/m3）
             self._set_typed_value(reaction, "Basis", 3, (), "Basis")
             self._set_typed_value(
@@ -943,6 +940,10 @@ class HYSYSDriver:
             self._set_typed_value(
                 reaction, "ReverseFrequencyFactor", float(reverse_frequency_factor),
                 ("m3/kgmole-s", "m3/kmol-s", "1/s"), "逆频率因子",
+            )
+            # 相态最后写：0=Overall（GUI 实测）；写逆向参数会重置相态
+            self._set_typed_value(
+                reaction, "ReactionPhase", int(reaction_phase), (), "ReactionPhase"
             )
         except HYSYSDriverError:
             raise
