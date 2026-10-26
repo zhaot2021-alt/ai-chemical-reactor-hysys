@@ -181,6 +181,7 @@ python src\test_stage2.py --no-visible
 - `tools/probe_hysys_property_package.py`：导出 COM 类型成员表，验证 `Add(name)`、组分/物性包顺序矩阵和 Peng-Robinson token。
 - `tools/probe_hysys_stream_composition.py`：验证物流组成写入方式、`Solver.CanSolve`、`IsSolving` 和求解后的流股状态。
 - `tools/probe_hysys_reactors.py`：导出 Flowsheet/Operations/ReactionPackage 成员，并尝试创建 Gibbs / Conversion / Equilibrium 反应器。
+- `tools/probe_hysys_reactor_add.py`：用多种大小写/短名快速定位 V15 的 reactor Add 类型字符串。
 
 阶段1/2A排查中已确认 `pengrob` token、Basis 提交顺序、`ComponentMolarFractionValue` 写入和 Solver 状态接口；工具保留用于后续版本或新环境复测。
 

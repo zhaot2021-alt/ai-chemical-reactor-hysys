@@ -8,7 +8,7 @@ probe_hysys_reactor_add.py — 快速定位 HYSYS V15 反应器 Add 类型字符
 
 不配置反应、不连流股、不保存；测试完关闭临时 Case。
 运行：
-    python tools\probe_hysys_reactor_add.py
+    python tools/probe_hysys_reactor_add.py
 """
 
 from __future__ import annotations
