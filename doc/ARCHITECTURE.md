@@ -1,8 +1,10 @@
-# HYSYS AI 反应器建模 — 阶段1 / 2A 架构说明
+# HYSYS AI 反应器建模 — 阶段1 / 2A / 2B / Agent 架构说明
 
-> 状态：**阶段1 与阶段2A 已于 2026-10-26 在 Aspen HYSYS V15 远程工作站验收通过**。
-> 范围：HYSYS 连接 → Case → PR 流体包 → 10 个标准组分 → FEED → 组成写入 → Solver → 结果读回 → `.hsc` → COM 释放。
-> **尚未创建任何反应器**（Conversion / Equilibrium / Gibbs 留到阶段2B）。
+> 状态：**阶段1、2A、2B 与两段式 Agent 已于 2026-10-26 在 Aspen HYSYS V15 远程工作站验收通过**。
+> 范围：连接/Case/PR/组分/FEED → 组成与求解 → Gibbs/Conversion 反应器 → 结果读回 → 本地 LLM plan + 远程执行。
+> 当前仍有限制：Conversion 依赖手动模板，Equilibrium/CSTR/PFR 未实现；详见 README 的验收边界。
+>
+> 阶段2B 补充实现（2026-10-26）：`create_reactor`（真实 TypeName：`gibbsreactorop`/`conversionreactorop`/`equilibriumreactorop`）、`open_case`/模板物流绑定、`create_energy_stream`/`set_energy_stream_heat_flow`、`connect_reactor`（Feeds.Add / VapourProduct / LiquidProduct / EnergyStream）、`scenario_runner`、`llm_planner`、`agent.py`。
 
 ---
 

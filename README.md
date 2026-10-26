@@ -190,13 +190,13 @@ python src\agent.py run --plan plans\gibbs_reformer.json --visible --log-level D
 python src\agent.py run --plan plans\toluene_disproportionation.json --visible --log-level DEBUG
 ```
 
-> Gibbs 场景使用等效预热达到 710℃/600℃；Conversion 场景依赖 `output/ref_conversion.hsc` 结构模板（50% 转化率）。
+> Gibbs 场景保持 FEED 520℃，通过 `Q-GIBBS` 能量流补热到 710℃/600℃；Conversion 场景依赖 `output/ref_conversion.hsc` 结构模板（50% 转化率）。
 
 ### 联合验收结果（2026-10-26）
 
 | 场景 | 关键结果 |
 |---|---|
-| 甲烷蒸汽重整（Gibbs） | 710℃：CH4 9.62% / H2O 38.45% / CO 4.57% / CO2 6.73% / H2 40.63%；600℃：CH4 16.16% / H2O 49.73% / CO 1.18% / CO2 5.88% / H2 27.06% |
+| 甲烷蒸汽重整（Gibbs） | FEED 520℃；能量流 duty 38.87 / 19.63 ×10⁶ kJ/h；710℃：CH4 9.63% / H2O 38.46% / CO 4.56% / CO2 6.73% / H2 40.61%；600℃：CH4 16.17% / H2O 49.75% / CO 1.17% / CO2 5.88% / H2 27.03% |
 | 甲苯歧化（Conversion） | 380℃ / 2.5 MPa / 10000 kg/h，实际转化率 **50.00%**；苯 25%，邻/间/对二甲苯各约 8.3%，甲苯 50% |
 
 两个场景均由 `agent.py run` 读取 LLM plan 执行，远程不需要 LLM key；HYSYS 正常 Quit，无后台残留。
@@ -225,7 +225,7 @@ python src\agent.py run --plan plans\toluene_disproportionation.json --visible -
 
 - 阶段1测试故意不含组成，用于验证 COM 连通；阶段2A测试含等摩尔组成并完成求解。
 - Gibbs/Conversion 反应器已可创建/连接/求解；Equilibrium 尚未接入执行器。
-- Gibbs 为绝热反应器，出口目标温度用等效预热实现；不是伪造温度属性。
+- Gibbs 通过 `Q-GIBBS` 能量流补热，FEED 保持 520℃；duty 由目标出口温度反算。
 - 当前 Conversion 执行器使用 50% 甲苯歧化模板，其他转化率/反应体系尚未泛化。
 - LLM 规划在当前机器生成 plan；远程执行不依赖 key。
 - HYSYS COM 无完整公开文档：仅使用有公开文档/工程代码/远程实测印证的接口；不确定项在代码中标注 **【需要在Excel VBA Object Browser核对】** 并带回退。
