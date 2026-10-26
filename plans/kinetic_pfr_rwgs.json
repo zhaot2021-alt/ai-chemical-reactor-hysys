@@ -37,12 +37,14 @@
     ],
     "reactor_spec": {
       "total_volume_m3": 1.0,
-      "tube_length_m": null,
-      "tube_diameter_m": null,
+      "tube_length_m": 5.0929,
+      "tube_diameter_m": 0.5,
       "volume_m3": null,
       "liquid_level_pct": null,
       "heat_flow_kj_h": 0.0,
-      "pressure_drop_kpa": 0.0
+      "pressure_drop_kpa": 0.0,
+      "phase_type": 5,
+      "holdup_init_type": 1
     },
     "notes": [
       "参数与手动参考 Case kinetic_pfr_ref.hsc 完全一致，用于对照验证。",

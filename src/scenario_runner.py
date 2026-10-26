@@ -404,6 +404,7 @@ def run_kinetic(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
 
     set_name = "KinSet"
     driver.create_reaction_set(set_name, set_type="Kinetic")
+    driver.associate_reaction_set(set_name)
     for index, reaction in enumerate(reactions, start=1):
         reaction_name = str(reaction.get("name") or f"KinRxn-{index}")
         kinetics = reaction.get("kinetics") or {}
@@ -423,7 +424,6 @@ def run_kinetic(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
             ),
             reaction_phase=int(kinetics.get("reaction_phase", 1)),
         )
-    driver.associate_reaction_set(set_name)
 
     if reactor_kind == "pfr":
         driver.create_empty_material_stream("PRODUCT")
@@ -439,6 +439,8 @@ def run_kinetic(plan: dict[str, Any], driver: Any) -> dict[str, Any]:
             tube_length_m=spec.get("tube_length_m"),
             tube_diameter_m=spec.get("tube_diameter_m"),
             heat_flow_kj_h=spec.get("heat_flow_kj_h"),
+            phase_type=int(spec.get("phase_type", 5)),
+            holdup_init_type=int(spec.get("holdup_init_type", 1)),
         )
     else:
         driver.create_empty_material_stream("VAPOUR")

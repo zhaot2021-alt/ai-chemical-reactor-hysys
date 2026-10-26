@@ -917,6 +917,14 @@ class HYSYSDriver:
             )
             reaction.ReactionPhase = int(reaction_phase)
             rset.ActiveReactions.Add(reaction)
+            # 参考 Case 实测：Basis=3（摩尔浓度 kgmole/m3）
+            self._set_typed_value(reaction, "Basis", 3, (), "Basis")
+            self._set_typed_value(
+                reaction, "BasisUnits2", "kgmole/m3", (), "BasisUnits2"
+            )
+            self._set_typed_value(
+                reaction, "RateUnits2", "kgmole/m3-s", (), "RateUnits2"
+            )
             self._set_typed_value(
                 reaction, "ForwardActivationEnergy", ae,
                 ("kJ/kgmole", "J/mol", "kJ/kmol"), "活化能",
@@ -944,6 +952,17 @@ class HYSYSDriver:
             "已添加 kineticrxn：%s（AE=%.4g kJ/kgmole, FF=%.4g, stoich=%s）",
             reaction_name, ae, ff, stoichiometry,
         )
+        for attr in (
+            "ForwardActivationEnergy", "ForwardFrequencyFactor",
+            "Basis", "BasisUnits2", "RateUnits2", "ReactionPhase",
+            "ReactantStoichCoefValue", "ComponentForwardOrderValue",
+        ):
+            try:
+                self.logger.info("kinetic 参数读回 %s = %r", attr, getattr(reaction, attr))
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning(
+                    "kinetic 参数读回 %s 失败：%s", attr, _com_error_detail(exc)
+                )
         return reaction_name
 
     def connect_kinetic_reactor(
@@ -963,6 +982,8 @@ class HYSYSDriver:
         volume_m3: float | None = None,
         liquid_level_pct: float | None = None,
         heat_flow_kj_h: float | None = None,
+        phase_type: int | None = None,
+        holdup_init_type: int | None = None,
     ) -> dict[str, Any]:
         """
         连接 kinetic CSTR/PFR（参考 Case 实测）：
@@ -1037,6 +1058,12 @@ class HYSYSDriver:
         ):
             if value is not None:
                 self._set_typed_value(operation, attr, float(value), units)
+        for attr, value in (
+            ("PhaseType", phase_type),
+            ("HoldupInitType", holdup_init_type),
+        ):
+            if value is not None:
+                self._set_typed_value(operation, attr, int(value), ())
 
         result = {
             "reactor": reactor_name,
@@ -1723,7 +1750,9 @@ class HYSYSDriver:
 
         values["mole_fractions"] = composition
         values["vapour_fraction"] = vapour_fraction
-        values["solved"] = composition is not None and vapour_fraction is not None
+        # PFR 产物流不提供 VapourFractionValue（0x80020009），
+        # 以组成读回（非 -32767）作为已求解标记。
+        values["solved"] = composition is not None
         return values
 
     def _get_operation(self, name: str) -> Any:
