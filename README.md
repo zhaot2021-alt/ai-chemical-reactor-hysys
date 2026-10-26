@@ -46,7 +46,7 @@ Aspen HYSYS V15  →  output/*.hsc
 - **可本地调试**：parser、dry-run 不导入驱动层；真实 COM 仅在 HYSYS 工作站执行。
 - **单位收口**：外部 ℃/bar/kmol·h⁻¹ ↔ HYSYS K/kPa/kgmole·h⁻¹ 的换算全部在 `config.py`。
 
-详细分层、接口和扩展点见 **[doc/ARCHITECTURE.md](doc/ARCHITECTURE.md)**。
+本 README 即为架构与接口的唯一文档；COM 边界、单位约定与验收记录见下文。
 
 ## 阶段1验收记录（2026-10-26）
 
@@ -133,10 +133,7 @@ chem_ai_model/
 │   ├── probe_hysys_reactor_add.py        # 反应器 Add 类型串快速探针
 │   ├── read_open_operations.py           # 只读导出参考 Case 的物流/操作成员
 │   └── read_open_fluid_packages.py       # 只读导出 Case/流体包/真实物性包名
-├── plans/                 # LLM 生成的 plan.json（两个必测场景）
-├── doc/
-│   └── ARCHITECTURE.md    # 分层架构、接口、COM 可信度、扩展点
-├── output/                # .hsc 输出目录
+├── output/                # .hsc 输出目录（运行时生成，不入库）
 └── README.md
 ```
 
@@ -177,18 +174,16 @@ python src\test_stage2.py --no-visible
 python src\agent.py plan --text "自然语言需求" --out output\plan.json
 ```
 
-已预生成两个必测场景的 plan：
+plan 由自然语言生成（本地需 LLM key），例如：
 
-```text
-plans\gibbs_reformer.json
-plans\toluene_disproportionation.json
+```bat
+python src\agent.py plan --text "甲苯进料 10000 kg/h、380℃、2.5MPa，歧化反应 2C7H8->C6H6+C8H10，转化率 50%" --out output\plan.json
 ```
 
 **远程 HYSYS 工作站（不需要 LLM key）**
 
 ```bat
-python src\agent.py run --plan plans\gibbs_reformer.json --visible --log-level DEBUG
-python src\agent.py run --plan plans\toluene_disproportionation.json --visible --log-level DEBUG
+python src\agent.py run --plan output\plan.json --visible --log-level DEBUG
 ```
 
 > Gibbs 场景保持 FEED 520℃，通过 `Q-GIBBS` 能量流补热到 710℃/600℃；Conversion 场景由 plan.reactions 动态创建反应集/反应/反应器，需要 LLM 给出已配平反应式。
@@ -199,9 +194,9 @@ python src\agent.py run --plan plans\toluene_disproportionation.json --visible -
 |---|---|
 | 甲烷蒸汽重整（Gibbs） | FEED 520℃；能量流 duty 38.87 / 19.63 ×10⁶ kJ/h；710℃：CH4 9.63% / H2O 38.46% / CO 4.56% / CO2 6.73% / H2 40.61%；600℃：CH4 16.17% / H2O 49.75% / CO 1.17% / CO2 5.88% / H2 27.03% |
 | 甲苯歧化（Conversion） | 380℃ / 2.5 MPa / 10000 kg/h，实际转化率 **50.00%**；苯 25%，邻/间/对二甲苯各约 8.3%，甲苯 50% |
-| 动力学 RWGS（PFR / CSTR） | 573 K / 10 bar / V=1 m³，AE=50000 kJ/kgmole、A=1000 m³/kgmole·s；PFR 转化率 1.98%、CSTR 1.00%，与解析解吻合（见 doc/REPORT_DRAFT.md §6） |
+| 动力学 RWGS（PFR / CSTR） | 573 K / 10 bar / V=1 m³，AE=50000 kJ/kgmole、A=1000 m³/kgmole·s；PFR 转化率 1.98%、CSTR 1.00%，与解析解吻合 |
 
-所有场景均由 `agent.py run` 读取 LLM plan 执行，远程不需要 LLM key；HYSYS 正常 Quit，无后台残留。
+所有场景均由 `agent.py plan`（本地 LLM）生成 plan、`agent.py run` 远程执行，远程不需要 LLM key；HYSYS 正常 Quit，无后台残留。
 
 ## 单位约定
 

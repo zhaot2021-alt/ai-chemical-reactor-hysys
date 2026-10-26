@@ -33,3 +33,10 @@ output/probe_*
 
 # 诊断报告原始文件（运行时产物，探针脚本本身在 tools/）
 output/*.txt
+
+# 交付物/文档（不进 GitHub 仓库，仅本地）
+/doc/
+/plans/
+/交付物/
+/AI化工反应器建模实战考核.md
+/tools/export_sessions.py
