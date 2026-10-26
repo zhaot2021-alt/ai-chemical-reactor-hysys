@@ -120,6 +120,9 @@ def _check_plan_requirements(plan: dict) -> list[str]:
         missing.append("feed_temperature_c（进料温度 ℃）")
     if plan.get("pressure_bar") is None:
         missing.append("pressure_bar（压力 bar）")
+    if reactor_type != "gibbs" and plan.get("molar_flow_kmolh") is None \
+            and plan.get("mass_flow_kg_h") is None:
+        missing.append("molar_flow_kmolh 或 mass_flow_kg_h（进料流量）")
     if reactor_type == "gibbs" and not plan.get("outlet_temperatures_c"):
         missing.append("outlet_temperatures_c（目标出口温度 ℃，可多个）")
     if reactor_type in ("conversion", "equilibrium") and not plan.get("reactions"):
