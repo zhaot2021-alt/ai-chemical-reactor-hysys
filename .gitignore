@@ -39,3 +39,6 @@ output/*.txt
 /交付物/
 /AI化工反应器建模实战考核.md
 /tools/export_sessions.py
+
+# plan 示例数据不入库（本地保留）
+/plans/
